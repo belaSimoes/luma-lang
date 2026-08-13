@@ -13,9 +13,7 @@ fn lex(source) {
 
   while (i < len(source)) {
     let ch = source[i];
-    if (ch == " ") {
-      i = i + 1;
-    } else if (contains(digits, ch)) {
+    if (ch == " ") { i = i + 1; } else if (contains(digits, ch)) {
       let start = i;
       while (i < len(source) && contains(digits, source[i])) {
         i = i + 1;
@@ -47,7 +45,7 @@ fn new_parser(tokens) {
     if (token == nil) { return 0; }
     if (token == "(") {
       let value = parse_expression();
-      advance();               // consume ")"
+      advance(); // consume ")"
       return value;
     }
     if (token == "-") { return -parse_factor(); }
@@ -59,7 +57,7 @@ fn new_parser(tokens) {
     while (peek() == "*" || peek() == "/") {
       let operator = advance();
       let right = parse_factor();
-      left = if (operator == "*") { left * right } else { left / right };
+      left = if (operator == "*") { left * right } else { left / right }
     }
     left
   }
@@ -69,7 +67,7 @@ fn new_parser(tokens) {
     while (peek() == "+" || peek() == "-") {
       let operator = advance();
       let right = parse_term();
-      left = if (operator == "+") { left + right } else { left - right };
+      left = if (operator == "+") { left + right } else { left - right }
     }
     left
   }
@@ -81,13 +79,7 @@ fn calculate(source) {
   new_parser(lex(source))()
 }
 
-let expressions = [
-  "1 + 2 * 3",
-  "(1 + 2) * 3",
-  "10 / 4",
-  "2 * (3 + 4) - 5",
-  "-3 + 10"
-];
+let expressions = ["1 + 2 * 3", "(1 + 2) * 3", "10 / 4", "2 * (3 + 4) - 5", "-3 + 10"];
 
 for (expression in expressions) {
   print(expression + " = " + str(calculate(expression)));

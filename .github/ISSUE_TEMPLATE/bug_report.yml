@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in the language, CLI, or playground behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. A short Luma program that
+        reproduces the problem is worth more than any description.
+
+  - type: textarea
+    id: program
+    attributes:
+      label: A program that reproduces it
+      description: The smallest one you can find. It will be pasted into a test.
+      render: luma
+      placeholder: |
+        fn f(n) { n * 2 }
+        print(f(21));
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      placeholder: |
+        Expected: 42
+        Got:      error[E0501]: operator '*' is not defined for number and nil
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Luma version
+      description: "`luma --version`, or the commit you are on."
+      placeholder: "1.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: "`node --version`"
+      placeholder: "v24.12.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did you hit it?
+      multiple: true
+      options:
+        - CLI (luma run / -e)
+        - REPL
+        - luma check
+        - luma fmt
+        - luma trace or the debugger
+        - Playground
+        - Used as a library
+    validations:
+      required: true

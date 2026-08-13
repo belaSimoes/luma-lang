@@ -24,11 +24,7 @@ print("{trim(line)} sum to {total}");
 // It works through indexes too, evaluating the target only once.
 let tally = {"hits": 0, "misses": 0};
 for (roll in [3, 7, 1, 9, 5, 2]) {
-  if (roll > 4) {
-    tally.hits += 1;
-  } else {
-    tally.misses += 1;
-  }
+  if (roll > 4) { tally.hits += 1; } else { tally.misses += 1; }
 }
 print("hits: {tally.hits}, misses: {tally.misses}");
 
@@ -36,7 +32,7 @@ print("hits: {tally.hits}, misses: {tally.misses}");
 let rows = [
   {"item": "widget", "qty": 3, "price": 4.5},
   {"item": "gizmo", "qty": 12, "price": 1.25},
-  {"item": "doohickey", "qty": 1, "price": 99.0}
+  {"item": "doohickey", "qty": 1, "price": 99},
 ];
 
 print("");

@@ -1,6 +1,6 @@
 {
   "name": "luma-lang",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Luma — a small, expressive programming language: hand-written lexer, Pratt parser and tree-walking interpreter in TypeScript, with zero runtime dependencies.",
   "type": "module",
   "license": "MIT",
@@ -49,7 +49,11 @@
     "playground": "npm run build && node scripts/serve.ts",
     "examples": "node scripts/run-examples.ts",
     "prepublishOnly": "npm run build",
-    "bench": "node bench/run.ts"
+    "bench": "node bench/run.ts",
+    "coverage": "node --test --experimental-test-coverage \"test/**/*.test.ts\"",
+    "fmt": "node src/cli.ts fmt examples/*.luma bench/*.luma",
+    "fmt:check": "node src/cli.ts fmt --check examples/*.luma bench/*.luma",
+    "docs": "node scripts/generate-error-docs.ts --write"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

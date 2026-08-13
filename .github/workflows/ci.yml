@@ -51,12 +51,48 @@ jobs:
       - name: Smoke-test the compiled CLI
         run: node dist/cli.js -e "assert(1 + 2 * 3 == 7, 'precedence'); print('ok')"
 
-  examples:
-    name: examples match their snapshots
+  quality:
+    name: formatting, docs and coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24.x
-      - run: node scripts/run-examples.ts
+          cache: npm
+      - run: npm ci
+
+      - name: Every example matches its snapshot
+        run: node scripts/run-examples.ts
+
+      - name: Luma sources are formatted
+        run: npm run fmt:check
+
+      - name: The diagnostic reference is up to date
+        run: |
+          node scripts/generate-error-docs.ts --write
+          git diff --exit-code -- docs/ERRORS.md \
+            || (echo "::error::docs/ERRORS.md is stale — run 'npm run docs'" && exit 1)
+
+      - name: Coverage
+        run: |
+          npm run coverage 2>&1 | tee coverage.txt
+          node - <<'JS'
+          const fs = require("node:fs");
+          const report = fs.readFileSync("coverage.txt", "utf8");
+          const row = report.split("\n").find((line) => line.includes("all files"));
+          if (!row) throw new Error("no coverage summary found");
+
+          const [lines, branches, functions] = row
+            .split("|")
+            .slice(1, 4)
+            .map((cell) => Number(cell.trim()));
+
+          console.log(`lines ${lines}%, branches ${branches}%, functions ${functions}%`);
+          const floor = 90;
+          for (const [name, value] of [["line", lines], ["branch", branches], ["function", functions]]) {
+            if (!(value >= floor)) {
+              throw new Error(`${name} coverage ${value}% is below the ${floor}% floor`);
+            }
+          }
+          JS

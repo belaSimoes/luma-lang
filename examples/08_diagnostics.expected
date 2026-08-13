@@ -1,5 +1,5 @@
 rectangle: 12
-error[runtime]: operator '*' is not defined for number and nil
+error[E0501]: operator '*' is not defined for number and nil
  --> 08_diagnostics.luma:7:9
   |
 7 |   width * height

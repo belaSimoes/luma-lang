@@ -13,8 +13,8 @@ fn counter(start) {
 let tick = counter(0);
 let other = counter(100);
 
-print(tick(), tick(), tick());   // independent state...
-print(other());                  // ...per closure
+print(tick(), tick(), tick()); // independent state...
+print(other()); // ...per closure
 
 // Partial application falls out of nested functions.
 fn adder(x) {
@@ -29,8 +29,12 @@ fn compose(f, g) {
   fn(x) { f(g(x)) }
 }
 
-fn double(n) { n * 2 }
-fn increment(n) { n + 1 }
+fn double(n) {
+  n * 2
+}
+fn increment(n) {
+  n + 1
+}
 
 let double_then_increment = compose(increment, double);
 print("compose:", map([1, 2, 3], double_then_increment));
@@ -39,9 +43,16 @@ print("compose:", map([1, 2, 3], double_then_increment));
 fn new_stack() {
   let items = [];
   {
-    "push": fn(item) { items = push(items, item); nil },
-    "pop":  fn() { let top = last(items); items = pop(items); top },
-    "size": fn() { len(items) }
+    "push": fn(item) {
+      items = push(items, item);
+      nil
+    },
+    "pop": fn() {
+      let top = last(items);
+      items = pop(items);
+      top
+    },
+    "size": fn() { len(items) },
   }
 }
 

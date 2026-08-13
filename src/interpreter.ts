@@ -27,6 +27,7 @@ import { parse } from "./parser.ts";
 import { resolve } from "./resolver.ts";
 import { createBuiltins } from "./builtins.ts";
 import type { TraceRecorder } from "./tracer.ts";
+import type { DiagnosticCode } from "./codes.ts";
 import type { Position } from "./token.ts";
 import {
   LumaBuiltin,
@@ -131,16 +132,19 @@ export class Interpreter {
   private describeStraySignal(error: unknown): unknown {
     if (error instanceof ReturnSignal) {
       return new RuntimeError("'return' outside of a function", this.here, {
+        code: "E0402",
         frames: [...this.frames].reverse(),
       });
     }
     if (error instanceof BreakSignal) {
       return new RuntimeError("'break' outside of a loop", this.here, {
+        code: "E0401",
         frames: [...this.frames].reverse(),
       });
     }
     if (error instanceof ContinueSignal) {
       return new RuntimeError("'continue' outside of a loop", this.here, {
+        code: "E0401",
         frames: [...this.frames].reverse(),
       });
     }
@@ -183,7 +187,7 @@ export class Interpreter {
         let iterations = 0;
         while (isTruthy(this.evalExpression(node.condition, env))) {
           if (++iterations > this.maxIterations) {
-            this.fail("loop exceeded the maximum number of iterations", node.position);
+            this.fail("loop exceeded the maximum number of iterations", node.position, 1, "E0601");
           }
           const signal = this.runLoopBody(node.body, env.child());
           if (signal === "break") break;
@@ -262,7 +266,7 @@ export class Interpreter {
       case "Identifier": {
         const value = env.lookup(node.name);
         if (value === UNBOUND) {
-          this.fail(`undefined variable '${node.name}'`, node.position, node.name.length);
+          this.fail(`undefined variable '${node.name}'`, node.position, node.name.length, "E0301");
         }
         return value;
       }
@@ -357,7 +361,7 @@ export class Interpreter {
         : this.evalExpression(arm.body, scope);
     }
 
-    this.fail(`no match arm matched ${inspect(subject)}`, node.position);
+    this.fail(`no match arm matched ${inspect(subject)}`, node.position, 1, "E0602");
   }
 
   /**
@@ -526,7 +530,7 @@ export class Interpreter {
   private evalIndex(target: LumaValue, index: LumaValue, position: Position): LumaValue {
     if (Array.isArray(target)) {
       if (typeof index !== "number" || !Number.isInteger(index)) {
-        this.fail(`array indices must be whole numbers, got ${typeOf(index)}`, position);
+        this.fail(`array indices must be whole numbers, got ${typeOf(index)}`, position, 1, "E0504");
       }
       const resolved = index < 0 ? target.length + index : index;
       return target[resolved] ?? null;
@@ -534,7 +538,7 @@ export class Interpreter {
 
     if (typeof target === "string") {
       if (typeof index !== "number" || !Number.isInteger(index)) {
-        this.fail(`string indices must be whole numbers, got ${typeOf(index)}`, position);
+        this.fail(`string indices must be whole numbers, got ${typeOf(index)}`, position, 1, "E0504");
       }
       const characters = [...target];
       const resolved = index < 0 ? characters.length + index : index;
@@ -545,7 +549,7 @@ export class Interpreter {
       return target.entries.get(this.asHashKey(index, position)) ?? null;
     }
 
-    this.fail(`cannot index into ${typeOf(target)}`, position);
+    this.fail(`cannot index into ${typeOf(target)}`, position, 1, "E0504");
   }
 
   /**
@@ -582,13 +586,15 @@ export class Interpreter {
 
     if (Array.isArray(container)) {
       if (typeof index !== "number" || !Number.isInteger(index)) {
-        this.fail(`array indices must be whole numbers, got ${typeOf(index)}`, target.position);
+        this.fail(`array indices must be whole numbers, got ${typeOf(index)}`, target.position, 1, "E0504");
       }
       const resolved = index < 0 ? container.length + index : index;
       if (resolved < 0 || resolved >= container.length) {
         this.fail(
           `index ${formatNumber(index)} is out of bounds for an array of length ${container.length}`,
           target.position,
+          1,
+          "E0504",
         );
       }
       const value = this.combine(operator, container[resolved]!, node, env);
@@ -650,7 +656,7 @@ export class Interpreter {
 
     if (!(callee instanceof LumaFunction)) {
       const what = label ? `'${label}'` : `a value of type ${typeOf(callee)}`;
-      this.fail(`${what} is not a function`, position);
+      this.fail(`${what} is not a function`, position, 1, "E0502");
     }
 
     if (args.length !== callee.parameters.length) {
@@ -658,6 +664,8 @@ export class Interpreter {
         `${callee.name || "anonymous function"} expects ${callee.parameters.length} ` +
           `argument${callee.parameters.length === 1 ? "" : "s"}, got ${args.length}`,
         position,
+        1,
+        "E0503",
       );
     }
 
@@ -665,6 +673,8 @@ export class Interpreter {
       this.fail(
         `maximum call depth of ${this.maxCallDepth} exceeded (infinite recursion?)`,
         position,
+        1,
+        "E0601",
       );
     }
 
@@ -724,6 +734,8 @@ export class Interpreter {
     this.fail(
       `${name} expects ${expected} argument${min === 1 && min === max ? "" : "s"}, got ${got}`,
       position,
+      1,
+      "E0503",
     );
   }
 
@@ -734,7 +746,7 @@ export class Interpreter {
     if (type === "string" || type === "number" || type === "boolean") {
       return value as HashKey;
     }
-    this.fail(`${type} cannot be used as a hash key`, position);
+    this.fail(`${type} cannot be used as a hash key`, position, 1, "E0504");
   }
 
   /** Give anonymous functions the name they are bound to — nicer stack traces. */
@@ -745,8 +757,14 @@ export class Interpreter {
     return value;
   }
 
-  private fail(message: string, position: Position, span = 1): never {
+  private fail(
+    message: string,
+    position: Position,
+    span = 1,
+    code: DiagnosticCode = "E0501",
+  ): never {
     throw new RuntimeError(message, position, {
+      code,
       frames: [...this.frames].reverse(),
       span,
     });

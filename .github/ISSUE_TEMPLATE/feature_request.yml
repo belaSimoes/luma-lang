@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a language feature, builtin, or tooling improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Luma is deliberately small. The best proposals show a program that is
+        awkward to write today and what it would look like afterwards.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is awkward today?
+      description: Show the code you have to write now.
+      render: luma
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would it look like instead?
+      render: luma
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including doing nothing — say why that is not enough.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Which parts would this touch?
+      description: A rough guess is fine; it helps size the change.
+      options:
+        - label: Lexer or parser (new syntax)
+        - label: Resolver (new static check)
+        - label: Interpreter (new semantics)
+        - label: Standard library (a builtin)
+        - label: Tooling (fmt, check, trace, playground)

@@ -8,4 +8,4 @@ while (i < 4000) {
   i = i + 1;
 }
 
-len(join(map(split(trim(out), " "), upper), "-"))
+len(join(map(split(trim(out), " "), upper), "-"));

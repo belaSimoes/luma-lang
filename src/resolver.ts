@@ -27,6 +27,7 @@ import type {
   Statement,
 } from "./ast.ts";
 import { LumaError, SemanticError, suggest } from "./errors.ts";
+import type { DiagnosticCode } from "./codes.ts";
 import type { Position } from "./token.ts";
 
 /** A deferred function body, captured together with the scopes it closed over. */
@@ -143,7 +144,7 @@ class Resolver {
         this.report(
           `unreachable code: the ${keywordOf(statement)} above always leaves this block`,
           next.position,
-          { severity: "warning" },
+          { code: "W0901", severity: "warning" },
         );
         // One warning per block is enough; the rest of the statements are still
         // resolved so their own mistakes are not hidden.
@@ -175,6 +176,7 @@ class Resolver {
       case "ReturnStatement":
         if (this.functionDepth === 0) {
           this.report("'return' outside of a function", node.position, {
+            code: "E0402",
             span: "return".length,
             hint: "return may only appear inside a function body",
           });
@@ -210,6 +212,7 @@ class Resolver {
         if (this.loopDepth === 0) {
           const keyword = node.kind === "BreakStatement" ? "break" : "continue";
           this.report(`'${keyword}' outside of a loop`, node.position, {
+            code: "E0401",
             span: keyword.length,
             hint: `${keyword} may only appear inside a while or for loop`,
           });
@@ -231,7 +234,12 @@ class Resolver {
 
       case "Identifier":
         if (!this.isDeclared(node.name)) {
-          this.reportUnknownName(`undefined variable '${node.name}'`, node.name, node.position);
+          this.reportUnknownName(
+            "E0301",
+            `undefined variable '${node.name}'`,
+            node.name,
+            node.position,
+          );
         }
         return;
 
@@ -310,6 +318,7 @@ class Resolver {
         if (node.target.kind === "Identifier") {
           if (!this.isDeclared(node.target.name)) {
             this.reportUnknownName(
+              "E0302",
               `cannot assign to undeclared variable '${node.target.name}'`,
               node.target.name,
               node.target.position,
@@ -335,6 +344,7 @@ class Resolver {
   // ------------------------------------------------------------ diagnostics
 
   private reportUnknownName(
+    code: DiagnosticCode,
     message: string,
     name: string,
     position: Position,
@@ -342,6 +352,7 @@ class Resolver {
   ): void {
     const closest = suggest(name, this.visibleNames());
     this.report(message, position, {
+      code,
       span: name.length,
       hint: closest !== null ? `did you mean '${closest}'?` : fallbackHint,
     });
@@ -350,10 +361,16 @@ class Resolver {
   private report(
     message: string,
     position: Position,
-    options: { span?: number; hint?: string | undefined; severity?: "error" | "warning" } = {},
+    options: {
+      code?: DiagnosticCode;
+      span?: number;
+      hint?: string | undefined;
+      severity?: "error" | "warning";
+    } = {},
   ): void {
     this.diagnostics.push(
       new SemanticError(message, position, {
+        code: options.code,
         span: options.span ?? 1,
         hint: options.hint,
         severity: options.severity ?? "error",

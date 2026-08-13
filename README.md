@@ -11,6 +11,8 @@ No parser generator, no runtime dependencies, no magic.
 
 [![CI](https://github.com/belaSimoes/luma-lang/actions/workflows/ci.yml/badge.svg)](https://github.com/belaSimoes/luma-lang/actions/workflows/ci.yml)
 [![Playground](https://img.shields.io/badge/playground-live-7aa2f7)](https://belasimoes.github.io/luma-lang/)
+![Coverage: 97%](https://img.shields.io/badge/coverage-97%25-9ece6a)
+![Tests: 525](https://img.shields.io/badge/tests-525-9ece6a)
 [![License: MIT](https://img.shields.io/badge/license-MIT-9ece6a)](LICENSE)
 ![Runtime dependencies: 0](https://img.shields.io/badge/runtime%20dependencies-0-8b93a7)
 
@@ -50,10 +52,16 @@ and getting `7`. Luma is that gap, made readable: every stage is a small file yo
 open, and the parts that are usually hidden — precedence climbing, scope chains, closure
 capture, error recovery — are the point rather than an implementation detail.
 
-It is deliberately complete rather than minimal: closures, pattern matching, string
-interpolation, mutable collections, a REPL, a CLI, a static analysis pass, structured
-diagnostics with source snippets and call stacks, a time-travel debugger, 394 tests, and a
-browser playground that runs the same code the CLI does.
+It is deliberately complete rather than minimal — a small language with a real toolchain
+around it:
+
+| | |
+| --- | --- |
+| **Language** | closures, pattern matching, string interpolation, mutable collections, `if` as an expression |
+| **Analysis** | a resolver that rejects undefined names, misplaced `break`/`return` and unreachable code *before* anything runs |
+| **Diagnostics** | source snippets, spelling suggestions, stable codes, `luma explain`, JSON output for editors |
+| **Tooling** | REPL, CLI, canonical formatter, time-travel debugger, benchmark suite |
+| **Quality** | 525 tests, 97% coverage, CI on Node 22/24 × Linux/Windows |
 
 ## The differentiator: a time-travel debugger
 
@@ -94,21 +102,21 @@ is reported in one pass, not one error per run:
 
 ```
 $ luma check examples/09_static_analysis.luma
-error[semantic]: undefined variable 'heigth'
+error[E0301]: undefined variable 'heigth'
   --> 09_static_analysis.luma:17:11
    |
 17 |   width * heigth
    |           ^^^^^^
    = help: did you mean 'height'?
 
-error[semantic]: 'break' outside of a loop
+error[E0401]: 'break' outside of a loop
   --> 09_static_analysis.luma:30:1
    |
 30 | break;
    | ^^^^^
    = help: break may only appear inside a while or for loop
 
-error[semantic]: cannot assign to undeclared variable 'total'
+error[E0302]: cannot assign to undeclared variable 'total'
   --> 09_static_analysis.luma:33:1
    |
 33 | total = area();
@@ -120,6 +128,45 @@ error[semantic]: cannot assign to undeclared variable 'total'
 
 The parser recovers too: a syntax error does not stop the run, it resynchronises at the
 next statement so the rest of the file is still checked.
+
+Every diagnostic carries a **stable code**. Messages can be reworded; codes never change,
+so a link to one keeps meaning what it meant:
+
+```
+$ luma explain E0301
+E0301: undefined variable
+
+A name was used that no 'let', 'fn' or parameter introduced.
+...
+```
+
+The full list is in [`docs/ERRORS.md`](docs/ERRORS.md), generated from the registry in
+`src/codes.ts` and kept in sync by a test. `luma check --json` emits one JSON object per
+diagnostic, for editors and CI annotations.
+
+## One canonical style
+
+`luma fmt` prints from the AST rather than editing text, so the result depends only on
+the program's structure — there is nothing to argue about in review:
+
+```bash
+luma fmt src/*.luma          # rewrite in place
+luma fmt --check src/*.luma  # list what would change, exit 1 (this runs in CI)
+```
+
+Two properties are asserted over every example in the repository:
+
+- **idempotent** — `format(format(x))` equals `format(x)`;
+- **meaning-preserving** — re-parsing the output yields the same AST.
+
+The second is not decoration. It caught a real bug during development: the printer was
+dropping parentheses at equal precedence, turning `1 - (2 - 3)` into `1 - 2 - 3`. Every
+infix operator in Luma is left-associative, and `+` is not even safe to reassociate —
+`1 + (2 + "x")` is `"12x"` while `(1 + 2) + "x"` is `"3x"`.
+
+Comments survive, which is most of the work: the AST does not contain them, so the lexer
+collects them and the printer re-inserts them by position — above the statement they
+introduce, or trailing the line they shared.
 
 ## Quick start
 
@@ -135,9 +182,11 @@ npm install          # installs TypeScript, used only for typechecking and the b
 npm start                                # REPL
 node src/cli.ts examples/02_fizzbuzz.luma
 node src/cli.ts -e 'print(map(range(5), fn(n) { n * n }))'
-npm test                                 # 219 tests, zero dependencies
+npm test                                 # 525 tests, zero dependencies
 npm run examples                         # run every example against its snapshot
 npm run playground                       # build + serve the web playground locally
+npm run fmt                              # format every Luma source in the repo
+npm run coverage                         # test with coverage
 ```
 
 ### CLI
@@ -148,6 +197,10 @@ npm run playground                       # build + serve the web playground loca
 | `luma file.luma` | run a program |
 | `luma -e '<code>'` | run a snippet and echo its value |
 | `luma check file.luma` | report problems without running the program |
+| `luma check --json f` | the same, as one JSON object per diagnostic |
+| `luma explain E0301` | describe a diagnostic code |
+| `luma fmt file.luma` | rewrite files in the canonical style |
+| `luma fmt --check f` | list unformatted files, exit 1 if any |
 | `luma trace file.luma` | run and print the execution timeline |
 | `luma ast file.luma` | dump the syntax tree as JSON |
 | `luma tokens file.luma` | dump the token stream as JSON |
@@ -170,7 +223,7 @@ interpreter.run("fn fib(n) { if (n < 2) { n } else { fib(n-1) + fib(n-2) } } pri
 ```luma
 // ── Bindings ────────────────────────────────────────────────
 let name = "Luma";        // declare
-name = "Luma 1.2";        // reassign; assigning an undeclared name is an error
+name = "Luma 1.3";        // reassign; assigning an undeclared name is an error
 let n = 1;
 n += 2;  n -= 1;  n *= 3; // compound assignment: also -= *= /= %=
 
@@ -286,6 +339,8 @@ value
 | `src/errors.ts` | ~205 | Positioned diagnostics, snippet rendering, spelling hints |
 | `src/highlight.ts` | ~125 | Syntax highlighting, driven by the real lexer |
 | `src/tracer.ts` | ~140 | Execution recording for the time-travel debugger |
+| `src/formatter.ts` | ~430 | The canonical printer behind `luma fmt` |
+| `src/codes.ts` | ~200 | The diagnostic registry, and the source of `docs/ERRORS.md` |
 
 ### Design notes
 
@@ -406,7 +461,7 @@ a committed snapshot, so nothing here can drift out of date.
 ## Testing
 
 ```bash
-npm test          # 394 tests across every layer
+npm test          # 525 tests across every layer
 npm run typecheck # strict TypeScript, noUncheckedIndexedAccess included
 npm run build     # emits dist/ with type declarations
 ```
@@ -425,7 +480,10 @@ Two properties are worth calling out, because they catch whole classes of bug at
 - the resolver must report *nothing* for a table of valid programs, which is what keeps
   static analysis from becoming a nuisance;
 - running a program with the recorder attached must produce exactly what running it
-  without one does, so the debugger observes rather than participates.
+  without one does, so the debugger observes rather than participates;
+- formatting is **idempotent** and **meaning-preserving**: `format(format(x)) == format(x)`,
+  and re-parsing the output yields the same AST, asserted over every example program. That
+  property caught a real bug — `1 - (2 - 3)` had been printed as `1 - 2 - 3`.
 
 ## Roadmap
 
@@ -436,13 +494,14 @@ Ideas that would each teach something new, roughly in order of interest:
 - [x] A benchmark suite to keep performance claims honest
 - [x] Pattern matching, string interpolation and compound assignment
 - [x] A time-travel debugger, in the browser and on the command line
+- [x] A canonical formatter, with stable diagnostic codes and `luma explain`
 - [ ] Breakpoints and a watch expression in the debugger
+- [ ] A language server — the resolver, formatter and highlighter are most of one
 - [ ] Turn the resolver's scope walk into slot indices, so lookups become array reads
 - [ ] A bytecode VM behind the same front-end, to compare tree-walking against a stack machine
 - [ ] Constant folding over the AST
 - [ ] `try`/`catch`, or a `Result`-style convention in the standard library
 - [ ] Modules (`import`) with a file-based resolver
-- [ ] A language server — the resolver and `src/highlight.ts` are already most of one
 
 ## License
 

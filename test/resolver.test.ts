@@ -159,14 +159,14 @@ describe("check() — analysis without execution", () => {
     const result = check("let = 1;");
     assert.equal(result.ok, false);
     assert.equal(result.errorCount, 1);
-    assert.match(result.report!, /error\[syntax]/);
+    assert.match(result.report!, /error\[E0201]/);
   });
 
   it("counts warnings without failing the program", () => {
     const result = check("fn f() { return 1; print(2); }");
     assert.equal(result.ok, true);
     assert.equal(result.warningCount, 1);
-    assert.match(result.report!, /warning\[semantic]/);
+    assert.match(result.report!, /warning\[W0901]/);
   });
 
   it("never executes the program it is checking", () => {

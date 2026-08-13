@@ -1,26 +1,26 @@
-warning[semantic]: unreachable code: the 'return' above always leaves this block
-  --> 09_static_analysis.luma:26:3
+warning[W0901]: unreachable code: the 'return' above always leaves this block
+  --> 09_static_analysis.luma:24:3
    |
-26 |   print("unreachable");
+24 |   print("unreachable")
    |   ^
-error[semantic]: undefined variable 'heigth'
+error[E0301]: undefined variable 'heigth'
   --> 09_static_analysis.luma:17:11
    |
 17 |   width * heigth
    |           ^^^^^^
    = help: did you mean 'height'?
 
-error[semantic]: 'break' outside of a loop
-  --> 09_static_analysis.luma:30:1
+error[E0401]: 'break' outside of a loop
+  --> 09_static_analysis.luma:28:1
    |
-30 | break;
+28 | break;
    | ^^^^^
    = help: break may only appear inside a while or for loop
 
-error[semantic]: cannot assign to undeclared variable 'total'
-  --> 09_static_analysis.luma:33:1
+error[E0302]: cannot assign to undeclared variable 'total'
+  --> 09_static_analysis.luma:31:1
    |
-33 | total = area();
+31 | total = area();
    | ^^^^^
    = help: use 'let total = ...' to declare it first
 

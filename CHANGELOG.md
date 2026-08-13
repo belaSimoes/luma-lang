@@ -4,6 +4,62 @@ All notable changes to Luma are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.3.0]
+
+A toolchain release: one canonical style, diagnostics you can look up, and the
+repository infrastructure a project this size should have.
+
+### Added
+
+- **`luma fmt`** — a canonical formatter. It prints from the AST, so the output
+  depends only on the program's structure. Two properties are asserted over
+  every example in the repository: formatting is **idempotent**, and it
+  **preserves meaning** (re-parsing the output yields the same AST).
+
+  Comments survive, which is most of the work: the AST does not contain them, so
+  the lexer now collects them and the printer re-inserts them by position —
+  above the statement they introduce, or trailing the line they shared.
+
+  `luma fmt --check` lists files that would change and exits 1; it runs in CI.
+
+- **Stable diagnostic codes.** Every diagnostic carries one — `error[E0301]`
+  rather than `error[semantic]` — from a registry in `src/codes.ts`. Codes are
+  append-only and never reused, so a link to one keeps meaning what it meant.
+  - `luma explain E0301` prints the long-form explanation.
+  - [`docs/ERRORS.md`](docs/ERRORS.md) is generated from the registry, and a
+    test fails if the committed file drifts.
+  - `luma check --json` emits one JSON object per diagnostic, for editors and CI
+    annotations. `LumaError` gained `toJSON()`.
+
+- **Statements and blocks carry their span** (`end` alongside `position`), which
+  is what lets the formatter tell a blank line the author wrote from the newline
+  after a closing brace. Useful to any editor tooling built on the AST.
+
+- Repository infrastructure: `SECURITY.md` with the interpreter's threat model
+  and resource limits, `CODE_OF_CONDUCT.md`, issue and pull-request templates,
+  Dependabot, and a release workflow that verifies the tag matches
+  `package.json` before publishing with provenance.
+
+- CI gained a quality job: `fmt --check`, a staleness check on the generated
+  diagnostic reference, and a **90% floor on line, branch and function
+  coverage** (currently 97%).
+
+### Changed
+
+- A stray `;` is now an empty statement rather than a syntax error, so
+  `let a = 1;;` is a formatting nit instead of a failure.
+- `luma fmt` expands globs itself. npm runs scripts through `cmd.exe` on
+  Windows, which does not, so `luma fmt examples/*.luma` would otherwise have
+  worked on one platform and not the other.
+
+### Fixed
+
+- The formatter dropped parentheses at equal precedence, so `1 - (2 - 3)` would
+  have been printed as `1 - 2 - 3`. Every infix operator in Luma is
+  left-associative, and `+` is not safe to reassociate either — `1 + (2 + "x")`
+  is `"12x"` while `(1 + 2) + "x"` is `"3x"`. Caught by the meaning-preserving
+  property test before it ever shipped.
+
 ## [1.2.0]
 
 Three language features, and a debugger you can run backwards.

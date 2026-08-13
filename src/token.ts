@@ -77,6 +77,23 @@ export type TemplatePart =
   | { kind: "text"; value: string }
   | { kind: "expression"; source: string; position: Position };
 
+/**
+ * A comment, kept aside rather than discarded.
+ *
+ * The parser has no use for these, but a formatter that dropped them would be
+ * unusable, so the lexer collects them with enough context to be placed back:
+ * `ownLine` distinguishes a comment that sits above a statement from one
+ * trailing it.
+ */
+export interface Comment {
+  /** Source text including the `//` or `/* *​/` delimiters. */
+  text: string;
+  position: Position;
+  end: Position;
+  /** True when nothing but whitespace precedes it on its line. */
+  ownLine: boolean;
+}
+
 export interface Position {
   /** 1-based line number. */
   line: number;

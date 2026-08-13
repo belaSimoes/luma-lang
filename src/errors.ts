@@ -16,12 +16,15 @@
  * see {@link LumaErrorGroup} and {@link formatErrors}.
  */
 
+import type { DiagnosticCode } from "./codes.ts";
 import type { Position } from "./token.ts";
 
 export type ErrorPhase = "syntax" | "semantic" | "runtime";
 export type Severity = "error" | "warning";
 
 export interface DiagnosticOptions {
+  /** Stable code, e.g. `E0301`. Shown in the headline and by `luma explain`. */
+  code?: DiagnosticCode;
   /** How many characters the caret underlines. Defaults to 1. */
   span?: number;
   /** Innermost-first call frames, e.g. `["fib(...)", "main(...)"]`. */
@@ -39,6 +42,8 @@ export class LumaError extends Error {
   readonly frames: string[];
   readonly hint: string | null;
   readonly severity: Severity;
+  /** Stable identifier, or null for a diagnostic not yet categorised. */
+  readonly code: DiagnosticCode | null;
 
   constructor(phase: ErrorPhase, message: string, position: Position, options: DiagnosticOptions = {}) {
     super(message);
@@ -49,6 +54,22 @@ export class LumaError extends Error {
     this.frames = options.frames ?? [];
     this.hint = options.hint ?? null;
     this.severity = options.severity ?? "error";
+    this.code = options.code ?? null;
+  }
+
+  /** A stable, machine-readable form for editors and CI annotations. */
+  toJSON(): Record<string, unknown> {
+    return {
+      severity: this.severity,
+      phase: this.phase,
+      code: this.code,
+      message: this.message,
+      line: this.position.line,
+      column: this.position.column,
+      span: this.span,
+      hint: this.hint,
+      frames: this.frames,
+    };
   }
 }
 
@@ -137,7 +158,10 @@ export function formatError(
 
   const { line, column } = error.position;
   const out: string[] = [];
-  out.push(`${paint(accent, `${error.severity}[${error.phase}]`)}: ${error.message}`);
+  // `error[E0301]` when the diagnostic is categorised, `error[semantic]` while
+  // it is not — the bracket always says something useful.
+  const label = error.code ?? error.phase;
+  out.push(`${paint(accent, `${error.severity}[${label}]`)}: ${error.message}`);
 
   const lines = source.split("\n");
   const target = lines[line - 1];
@@ -166,6 +190,13 @@ export function formatError(
   }
 
   return out.join("\n");
+}
+
+/** Render diagnostics as JSON lines, for editors and CI annotations. */
+export function formatErrorsJson(errors: LumaError[], file?: string): string {
+  return errors
+    .map((error) => JSON.stringify({ file: file ?? "<input>", ...error.toJSON() }))
+    .join("\n");
 }
 
 /** Render a group of diagnostics, ordered by position, with a closing tally. */

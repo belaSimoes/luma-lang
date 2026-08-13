@@ -7,6 +7,7 @@
 
 import {
   KEYWORDS,
+  type Comment,
   type Position,
   type TemplatePart,
   type Token,
@@ -31,6 +32,9 @@ const ESCAPES: Record<string, string> = {
 };
 
 export class Lexer {
+  /** Comments seen so far, in source order. Populated as tokenizing proceeds. */
+  readonly comments: Comment[] = [];
+
   private readonly source: string;
   private index = 0;
   private line: number;
@@ -97,7 +101,7 @@ export class Lexer {
 
     const raw = this.source.slice(start, this.index).replaceAll("_", "");
     if (!Number.isFinite(Number(raw))) {
-      throw new SyntaxError_(`invalid number literal '${raw}'`, position);
+      throw new SyntaxError_(`invalid number literal '${raw}'`, position, { code: "E0101" });
     }
     return this.token("NUMBER", raw, position);
   }
@@ -132,12 +136,13 @@ export class Lexer {
     for (;;) {
       const ch = this.peek();
       if (ch === "") {
-        throw new SyntaxError_("unterminated string literal", position);
+        throw new SyntaxError_("unterminated string literal", position, { code: "E0102" });
       }
       if (ch === "\n") {
         throw new SyntaxError_(
           "unterminated string literal (newlines must be written as \\n)",
           position,
+          { code: "E0102" },
         );
       }
 
@@ -156,11 +161,13 @@ export class Lexer {
 
       const escape = this.peek();
       if (escape === "") {
-        throw new SyntaxError_("unterminated escape sequence", this.position());
+        throw new SyntaxError_("unterminated escape sequence", this.position(), { code: "E0103" });
       }
       const decoded = ESCAPES[escape];
       if (decoded === undefined) {
-        throw new SyntaxError_(`unknown escape sequence '\\${escape}'`, this.position());
+        throw new SyntaxError_(`unknown escape sequence '\\${escape}'`, this.position(), {
+          code: "E0103",
+        });
       }
       this.advance();
       value += decoded;
@@ -193,7 +200,7 @@ export class Lexer {
     for (;;) {
       const ch = this.peek();
       if (ch === "" || ch === "\n") {
-        throw new SyntaxError_("unterminated interpolation: expected '}'", opened);
+        throw new SyntaxError_("unterminated interpolation: expected '}'", opened, { code: "E0102" });
       }
       if (ch === '"' || ch === "'") {
         this.skipNestedString(ch);
@@ -211,7 +218,7 @@ export class Lexer {
     this.advance(); // `}`
 
     if (source.trim() === "") {
-      throw new SyntaxError_("empty interpolation: expected an expression", opened);
+      throw new SyntaxError_("empty interpolation: expected an expression", opened, { code: "E0201" });
     }
     return { kind: "expression", source, position: startPosition };
   }
@@ -222,7 +229,7 @@ export class Lexer {
     for (;;) {
       const ch = this.peek();
       if (ch === "" || ch === "\n") {
-        throw new SyntaxError_("unterminated string literal", this.position());
+        throw new SyntaxError_("unterminated string literal", this.position(), { code: "E0102" });
       }
       this.advance();
       if (ch === "\\") {
@@ -296,7 +303,7 @@ export class Lexer {
         return this.token("RBRACKET", ch, position);
     }
 
-    throw new SyntaxError_(`unexpected character '${ch}'`, position);
+    throw new SyntaxError_(`unexpected character '${ch}'`, position, { code: "E0101" });
   }
 
   private skipTrivia(): void {
@@ -310,16 +317,20 @@ export class Lexer {
         continue;
       }
       if (ch === "/" && this.peek(1) === "/") {
+        const opened = this.position();
+        const start = this.index;
         while (this.peek() !== "" && this.peek() !== "\n") this.advance();
+        this.collectComment(start, opened);
         continue;
       }
       if (ch === "/" && this.peek(1) === "*") {
         const opened = this.position();
+        const start = this.index;
         this.advance();
         this.advance();
         for (;;) {
           if (this.peek() === "") {
-            throw new SyntaxError_("unterminated block comment", opened);
+            throw new SyntaxError_("unterminated block comment", opened, { code: "E0102" });
           }
           if (this.peek() === "*" && this.peek(1) === "/") {
             this.advance();
@@ -328,6 +339,7 @@ export class Lexer {
           }
           this.advance();
         }
+        this.collectComment(start, opened);
         continue;
       }
       return;
@@ -354,6 +366,35 @@ export class Lexer {
 
   private position(): Position {
     return { line: this.line, column: this.column };
+  }
+
+  /**
+   * Stash a comment for tools that care about them. `ownLine` records whether
+   * anything other than whitespace preceded it, which is what tells a formatter
+   * to keep it above a statement rather than trailing it.
+   */
+  private collectComment(start: number, position: Position): void {
+    let index = start - 1;
+    while (index >= 0) {
+      const ch = this.source[index]!;
+      if (ch === "\n") break;
+      if (ch !== " " && ch !== "\t" && ch !== "\r") {
+        this.comments.push({
+          text: this.source.slice(start, this.index),
+          position,
+          end: this.position(),
+          ownLine: false,
+        });
+        return;
+      }
+      index -= 1;
+    }
+    this.comments.push({
+      text: this.source.slice(start, this.index),
+      position,
+      end: this.position(),
+      ownLine: true,
+    });
   }
 
   /**

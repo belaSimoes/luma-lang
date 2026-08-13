@@ -8,7 +8,7 @@ fn quicksort(items) {
   let others = rest(items);
 
   let smaller = filter(others, fn(n) { n < pivot });
-  let larger  = filter(others, fn(n) { n >= pivot });
+  let larger = filter(others, fn(n) { n >= pivot });
 
   quicksort(smaller) + [pivot] + quicksort(larger)
 }
@@ -46,7 +46,7 @@ print("builtin   ", sort(data));
 let people = [
   {"name": "Ada", "age": 36},
   {"name": "Grace", "age": 45},
-  {"name": "Alan", "age": 41}
+  {"name": "Alan", "age": 41},
 ];
 
 let by_age = sort(people, fn(a, b) { a.age - b.age });

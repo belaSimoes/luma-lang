@@ -5,11 +5,13 @@
  *   luma                     start the REPL
  *   luma script.luma         run a file
  *   luma -e "print(1 + 1)"   run a snippet
- *   luma ast script.luma     dump the syntax tree as JSON
- *   luma tokens script.luma  dump the token stream
+ *   luma check script.luma   analyse without running it
+ *   luma fmt script.luma     rewrite it in the canonical style
+ *   luma trace script.luma   run it and print the execution timeline
+ *   luma explain E0301       describe a diagnostic code
  */
 
-import { readFileSync } from "node:fs";
+import { globSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import process from "node:process";
 
@@ -20,8 +22,10 @@ import { tokenize } from "./lexer.ts";
 import { startRepl } from "./repl.ts";
 import { inspect } from "./values.ts";
 import { check, trace } from "./index.ts";
+import { format } from "./formatter.ts";
+import { DIAGNOSTIC_CODES, allCodes, explainCode } from "./codes.ts";
 
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 
 const ESC = String.fromCharCode(27);
 const DIM = process.stdout.isTTY === true ? `${ESC}[2m` : "";
@@ -34,6 +38,10 @@ Usage:
   luma <file.luma>           run a program
   luma -e, --eval <code>     run a snippet
   luma check <file.luma>     report problems without running the program
+  luma check --json <file>   the same, as one JSON object per line
+  luma explain <CODE>        describe a diagnostic code, e.g. E0301
+  luma fmt <file.luma>...    rewrite files in the canonical style
+  luma fmt --check <file>... list files that are not formatted, and exit 1
   luma trace <file.luma>     run and print the execution timeline
   luma ast <file.luma>       print the syntax tree as JSON
   luma tokens <file.luma>    print the token stream
@@ -72,6 +80,72 @@ function main(argv: string[]): number {
       return execute(code, "<eval>", { echo: true });
     }
 
+    case "explain": {
+      const code = rest[0];
+      if (code === undefined) {
+        process.stderr.write(
+          `error: 'explain' requires a code, e.g. 'luma explain E0301'\n\n` +
+            `known codes:\n${allCodes()
+              .map((known) => `  ${known}  ${DIAGNOSTIC_CODES[known].title}`)
+              .join("\n")}\n`,
+        );
+        return 2;
+      }
+
+      const entry = explainCode(code);
+      if (entry === null) {
+        process.stderr.write(`error: unknown diagnostic code '${code}'\n`);
+        return 2;
+      }
+      process.stdout.write(`${code.toUpperCase()}: ${entry.title}\n\n${entry.explanation}\n`);
+      return 0;
+    }
+
+    case "fmt": {
+      const patterns = rest.filter((argument) => !argument.startsWith("-"));
+      const check_ = rest.includes("--check");
+      if (patterns.length === 0) {
+        process.stderr.write("error: 'fmt' requires at least one file\n");
+        return 2;
+      }
+
+      const files = expandGlobs(patterns);
+      if (files.length === 0) {
+        process.stderr.write(`error: no files matched ${patterns.join(", ")}\n`);
+        return 66;
+      }
+
+      let changed = 0;
+      for (const file of files) {
+        const source = read(file);
+        if (source === null) return 66;
+
+        let formatted: string;
+        try {
+          formatted = format(source);
+        } catch (error) {
+          return reportError(error, source, basename(file));
+        }
+
+        if (formatted === source) continue;
+        changed += 1;
+
+        if (check_) {
+          process.stdout.write(`${file}\n`);
+        } else {
+          writeFileSync(file, formatted, "utf8");
+          process.stderr.write(`formatted ${file}\n`);
+        }
+      }
+
+      if (check_ && changed > 0) {
+        const suffix = changed === 1 ? " needs" : "s need";
+        process.stderr.write(`${changed} file${suffix} formatting\n`);
+        return 1;
+      }
+      return 0;
+    }
+
     case "trace": {
       const file = rest[0];
       if (file === undefined) {
@@ -84,7 +158,7 @@ function main(argv: string[]): number {
     }
 
     case "check": {
-      const file = rest[0];
+      const file = rest.find((argument) => !argument.startsWith("-"));
       if (file === undefined) {
         process.stderr.write("error: 'check' requires a file\n");
         return 2;
@@ -92,10 +166,12 @@ function main(argv: string[]): number {
       const source = read(file);
       if (source === null) return 66;
 
-      const result = check(source, { file: basename(file) });
+      const asJson = rest.includes("--json");
+      const result = check(source, { file: basename(file), format: asJson ? "json" : "text" });
       if (result.report !== null) {
         process.stderr.write(`${result.report}\n`);
       }
+      if (asJson) return result.ok ? 0 : 1;
       if (result.ok) {
         const suffix = result.warningCount === 1 ? "" : "s";
         process.stdout.write(
@@ -135,6 +211,25 @@ function main(argv: string[]): number {
       return execute(source, basename(first!), { echo: false });
     }
   }
+}
+
+/**
+ * Expand glob patterns ourselves.
+ *
+ * npm runs scripts through cmd.exe on Windows, which does not expand globs, so
+ * `luma fmt examples/*.luma` would otherwise work on one platform and not the
+ * other. Doing it here makes the command behave the same everywhere.
+ */
+function expandGlobs(patterns: string[]): string[] {
+  const files = new Set<string>();
+  for (const pattern of patterns) {
+    if (!pattern.includes("*")) {
+      files.add(pattern);
+      continue;
+    }
+    for (const match of globSync(pattern)) files.add(match);
+  }
+  return [...files].sort();
 }
 
 function read(file: string): string | null {

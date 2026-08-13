@@ -1,7 +1,6 @@
 // A small text pipeline: normalise, tokenise, count, rank.
 
-let text = "the quick brown fox jumps over the lazy dog " +
-           "the dog barks and the fox runs";
+let text = "the quick brown fox jumps over the lazy dog " + "the dog barks at the fox";
 
 fn tokenize(source) {
   filter(split(lower(trim(source)), " "), fn(word) { word != "" })
@@ -9,7 +8,7 @@ fn tokenize(source) {
 
 fn count_words(words) {
   reduce(words, {}, fn(counts, word) {
-    counts[word] = if (contains(counts, word)) { counts[word] + 1 } else { 1 };
+    counts[word] = if (contains(counts, word)) { counts[word] + 1 } else { 1 }
     counts
   })
 }

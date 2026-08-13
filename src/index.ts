@@ -32,6 +32,14 @@ export {
   type TraceStep,
 } from "./tracer.ts";
 export {
+  DIAGNOSTIC_CODES,
+  allCodes,
+  explainCode,
+  type CodeEntry,
+  type DiagnosticCode,
+} from "./codes.ts";
+export { format, type FormatOptions as FormatterOptions } from "./formatter.ts";
+export {
   LumaError,
   LumaErrorGroup,
   RuntimeError,
@@ -39,6 +47,7 @@ export {
   SyntaxError_ as LumaSyntaxError,
   formatError,
   formatErrors,
+  formatErrorsJson,
   suggest,
   toDiagnostics,
   type Severity,
@@ -56,7 +65,7 @@ export type * from "./ast.ts";
 export type { Position, Token, TokenType } from "./token.ts";
 
 import { Interpreter, type InterpreterOptions } from "./interpreter.ts";
-import { formatErrors, toDiagnostics } from "./errors.ts";
+import { formatErrors, formatErrorsJson, toDiagnostics, type LumaError } from "./errors.ts";
 import { parse } from "./parser.ts";
 import { resolve } from "./resolver.ts";
 import { createBuiltins } from "./builtins.ts";
@@ -130,11 +139,14 @@ export interface CheckResult {
  * Analyse a program without running it: parse it, then resolve it. This is what
  * `luma check` and the playground's inline diagnostics use.
  */
-export function check(source: string, options: { file?: string } = {}): CheckResult {
+export function check(
+  source: string,
+  options: { file?: string; format?: "text" | "json" } = {},
+): CheckResult {
   const globals = [...createBuiltins().keys()];
 
-  let errors: Parameters<typeof formatErrors>[0] = [];
-  let warnings: Parameters<typeof formatErrors>[0] = [];
+  let errors: LumaError[] = [];
+  let warnings: LumaError[] = [];
 
   try {
     const result = resolve(parse(source), { globals });
@@ -147,8 +159,13 @@ export function check(source: string, options: { file?: string } = {}): CheckRes
   }
 
   const all = [...errors, ...warnings];
+  const render = (): string =>
+    options.format === "json"
+      ? formatErrorsJson(all, options.file)
+      : formatErrors(all, source, { file: options.file, color: false });
+
   return {
-    report: all.length > 0 ? formatErrors(all, source, { file: options.file, color: false }) : null,
+    report: all.length > 0 ? render() : null,
     errorCount: errors.length,
     warningCount: warnings.length,
     ok: errors.length === 0,

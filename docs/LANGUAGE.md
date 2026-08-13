@@ -426,12 +426,16 @@ error — so `shape.hieght` is a runtime failure, not a static one.
 
 ## 7. Errors
 
-Every diagnostic carries a phase (`syntax`, `semantic` or `runtime`), a severity
-(`error` or `warning`), a message, a line/column, an underlined span, an optional
-`= help:` hint and, for runtime errors, a call stack. The standard rendering is:
+Every diagnostic carries a **stable code**, a phase (`syntax`, `semantic` or
+`runtime`), a severity (`error` or `warning`), a message, a line/column, an
+underlined span, an optional `= help:` hint and, for runtime errors, a call
+stack. Codes are append-only and never reused; the full reference is
+[`ERRORS.md`](ERRORS.md), and `luma explain <CODE>` prints any of them.
+
+The standard rendering is:
 
 ```
-error[runtime]: operator '*' is not defined for number and nil
+error[E0501]: operator '*' is not defined for number and nil
  --> shapes.luma:7:9
   |
 7 |   width * height
@@ -451,7 +455,33 @@ Both are configurable through the `Interpreter` options.
 
 ---
 
-## 8. Debugging
+## 8. Formatting
+
+`luma fmt` rewrites a program in the canonical style; `luma fmt --check` reports
+which files would change without touching them.
+
+The formatter prints from the AST, so the result depends only on the program's
+structure. Its rules:
+
+- two-space indentation, one statement per line;
+- spaces around binary operators, none around `.`;
+- `a["b"]` prints as `a.b` when the key is a plain identifier;
+- collection literals and call arguments stay on one line when they fit within
+  88 columns, otherwise take one item per line with a trailing comma — except a
+  trailing multi-line argument, which stays hugged to its call;
+- a block holding one simple expression collapses to `{ … }`;
+- `match` takes one arm per line;
+- the expression that gives a block its value keeps no semicolon, the way Rust
+  writes a tail expression — but an assignment keeps one, since it is written
+  for its effect;
+- blank lines the author wrote are preserved, collapsed to at most one;
+- comments are preserved: an own-line comment stays above the statement it
+  introduces, and one sharing a line with code trails that code.
+
+Two things it deliberately does not do: reflow long operator chains, and reorder
+anything.
+
+## 9. Debugging
 
 `luma trace <file>` runs a program while recording an execution timeline, and
 the playground's **Debug** button scrubs that timeline interactively — in both
@@ -473,7 +503,7 @@ Two consequences worth knowing:
 
 ---
 
-## 9. Standard library
+## 10. Standard library
 
 See the [builtin reference in the README](../README.md#standard-library).
 

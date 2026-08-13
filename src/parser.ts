@@ -23,7 +23,13 @@ import type {
 } from "./ast.ts";
 import { LumaError, LumaErrorGroup, SyntaxError_ } from "./errors.ts";
 import { Lexer } from "./lexer.ts";
-import { describeToken, type Position, type Token, type TokenType } from "./token.ts";
+import {
+  describeToken,
+  type Comment,
+  type Position,
+  type Token,
+  type TokenType,
+} from "./token.ts";
 
 const LOWEST = 0;
 const ASSIGNMENT = 1;
@@ -71,6 +77,9 @@ const PRECEDENCE: Partial<Record<TokenType, number>> = {
 
 export class Parser {
   private readonly tokens: Token[];
+  /** Comments found while lexing, in source order. Only the formatter uses them. */
+  readonly comments: Comment[];
+
   private cursor = 0;
 
   /**
@@ -79,7 +88,9 @@ export class Parser {
    *   interpolated expression parsed on its own still reports true positions.
    */
   constructor(source: string, origin?: Position) {
-    this.tokens = new Lexer(source, origin).tokenize();
+    const lexer = new Lexer(source, origin);
+    this.tokens = lexer.tokenize();
+    this.comments = lexer.comments;
   }
 
   /**
@@ -96,6 +107,13 @@ export class Parser {
     const errors: LumaError[] = [];
 
     while (!this.currentIs("EOF")) {
+      // A stray `;` is an empty statement: harmless, and tolerating it means
+      // `let a = 1;;` is a formatting nit rather than a syntax error.
+      if (this.currentIs("SEMICOLON")) {
+        this.advance();
+        continue;
+      }
+
       const before = this.cursor;
       try {
         body.push(this.parseStatement());
@@ -142,7 +160,17 @@ export class Parser {
 
   // --------------------------------------------------------------- statements
 
+  /**
+   * Parse one statement and stamp it with the span it occupied. Doing it in a
+   * single wrapper keeps every statement rule free of position bookkeeping.
+   */
   private parseStatement(): Statement {
+    const node = this.parseStatementInner();
+    node.end = this.tokens[Math.max(0, this.cursor - 1)]!.end;
+    return node;
+  }
+
+  private parseStatementInner(): Statement {
     switch (this.current().type) {
       case "LET":
         return this.parseLetStatement();
@@ -248,12 +276,18 @@ export class Parser {
     const body: Statement[] = [];
     while (!this.currentIs("RBRACE")) {
       if (this.currentIs("EOF")) {
-        throw new SyntaxError_("unclosed block: expected '}'", position);
+        throw new SyntaxError_("unclosed block: expected '}'", position, { code: "E0201" });
+      }
+      if (this.currentIs("SEMICOLON")) {
+        this.advance();
+        continue;
       }
       body.push(this.parseStatement());
     }
-    this.advance(); // `}`
-    return { kind: "BlockStatement", body, position };
+    const closing = this.advance(); // `}`
+    // Blocks carry their span like statements do: the formatter needs to know
+    // which line the closing brace sat on to place a trailing comment inside.
+    return { kind: "BlockStatement", body, position, end: closing.end };
   }
 
   // -------------------------------------------------------------- expressions
@@ -328,6 +362,7 @@ export class Parser {
         throw new SyntaxError_(
           `unexpected ${describeToken(token)} at the start of an expression`,
           token.position,
+          { code: "E0201" },
         );
     }
   }
@@ -381,6 +416,7 @@ export class Parser {
       throw new SyntaxError_(
         "invalid assignment target: expected a variable or an index expression",
         left.position,
+        { code: "E0202" },
       );
     }
     // Right-associative: `a = b = c` parses as `a = (b = c)`.
@@ -425,6 +461,7 @@ export class Parser {
         `unexpected ${describeToken(this.current())} in an interpolation: ` +
           "each '{…}' holds a single expression",
         this.current().position,
+        { code: "E0201" },
       );
     }
     return expression;
@@ -442,7 +479,7 @@ export class Parser {
     const arms: MatchArm[] = [];
     while (!this.currentIs("RBRACE")) {
       if (this.currentIs("EOF")) {
-        throw new SyntaxError_("unclosed match: expected '}'", position);
+        throw new SyntaxError_("unclosed match: expected '}'", position, { code: "E0201" });
       }
       arms.push(this.parseMatchArm());
       if (!this.currentIs("RBRACE")) {
@@ -452,7 +489,7 @@ export class Parser {
     this.advance(); // `}`
 
     if (arms.length === 0) {
-      throw new SyntaxError_("a match expression needs at least one arm", position);
+      throw new SyntaxError_("a match expression needs at least one arm", position, { code: "E0201" });
     }
     return { kind: "MatchExpression", subject, arms, position };
   }
@@ -495,6 +532,7 @@ export class Parser {
           "alternatives in a pattern may not bind names, because only one of " +
             "them matches and the body could not tell which",
           option.position,
+          { code: "E0203" },
         );
       }
     }
@@ -543,6 +581,7 @@ export class Parser {
         throw new SyntaxError_(
           `unexpected ${describeToken(token)} in a pattern`,
           token.position,
+          { code: "E0201" },
         );
     }
   }
@@ -554,7 +593,7 @@ export class Parser {
 
     while (!this.currentIs("RBRACKET")) {
       if (this.currentIs("EOF")) {
-        throw new SyntaxError_("unclosed array pattern: expected ']'", position);
+        throw new SyntaxError_("unclosed array pattern: expected ']'", position, { code: "E0203" });
       }
 
       if (this.currentIs("ELLIPSIS")) {
@@ -564,6 +603,7 @@ export class Parser {
           throw new SyntaxError_(
             "'...rest' must be the last element of an array pattern",
             ellipsis.position,
+            { code: "E0203" },
           );
         }
         break;
@@ -585,7 +625,7 @@ export class Parser {
 
     while (!this.currentIs("RBRACE")) {
       if (this.currentIs("EOF")) {
-        throw new SyntaxError_("unclosed hash pattern: expected '}'", position);
+        throw new SyntaxError_("unclosed hash pattern: expected '}'", position, { code: "E0203" });
       }
       const key = this.parsePrefix();
       this.expect("COLON", "':' between a hash-pattern key and its pattern");
@@ -680,6 +720,7 @@ export class Parser {
         throw new SyntaxError_(
           `duplicate parameter '${token.literal}'`,
           token.position,
+          { code: "E0201" },
         );
       }
       seen.add(token.literal);
@@ -700,6 +741,7 @@ export class Parser {
         throw new SyntaxError_(
           `unexpected end of input: expected '${closer}'`,
           this.current().position,
+          { code: "E0201" },
         );
       }
       items.push(this.parseExpression(LOWEST));
@@ -741,6 +783,7 @@ export class Parser {
       throw new SyntaxError_(
         `expected ${what}, found ${describeToken(token)}`,
         token.position,
+        { code: "E0201" },
       );
     }
     return this.advance();

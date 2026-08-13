@@ -5,4 +5,4 @@ while (i < 400000) {
   total = total + i % 7;
   i = i + 1;
 }
-total
+total;

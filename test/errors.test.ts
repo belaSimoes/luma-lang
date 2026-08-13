@@ -109,7 +109,7 @@ describe("errors — rendering", () => {
     assert.equal(
       result.error,
       [
-        "error[semantic]: undefined variable 'missing'",
+        "error[E0301]: undefined variable 'missing'",
         " --> script.luma:2:7",
         "  |",
         "2 | print(missing);",
@@ -156,7 +156,7 @@ describe("errors — rendering", () => {
   it("labels warnings differently from errors", () => {
     const result = run("fn f() { return 1; print(2); } f();");
     assert.equal(result.ok, true);
-    assert.match(result.warnings!, /^warning\[semantic]: unreachable code/);
+    assert.match(result.warnings!, /^warning\[W0901]: unreachable code/);
   });
 
   it("degrades gracefully when the position is out of range", () => {

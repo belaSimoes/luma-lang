@@ -18,12 +18,10 @@ fn area() {
 }
 
 fn classify(n) {
-  if (n > 100) {
-    return "large";
-  }
+  if (n > 100) { return "large"; }
   return "small";
   // Nothing after a return can ever execute.
-  print("unreachable");
+  print("unreachable")
 }
 
 // `break` only means something inside a loop.

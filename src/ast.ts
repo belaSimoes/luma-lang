@@ -9,7 +9,16 @@
 import type { Position } from "./token.ts";
 
 export interface NodeBase {
+  /** Position of the node's first token. */
   position: Position;
+  /**
+   * Position just past the node's last token.
+   *
+   * Populated for **statements** only, which is what tooling needs to know how
+   * many source lines a construct occupied — the formatter uses it to tell a
+   * blank line the author wrote from the newline after a closing brace.
+   */
+  end?: Position;
 }
 
 // ------------------------------------------------------------------ program
