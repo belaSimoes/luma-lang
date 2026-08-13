@@ -285,10 +285,67 @@ ignore.
 
 ---
 
-## 6. Errors
+## 6. Static analysis
 
-Every error carries a phase (`syntax` or `runtime`), a message, a line/column
-and, for runtime errors, a call stack. The standard rendering is:
+A program passes through three stages: **parse → resolve → evaluate**. The
+resolver runs over the complete AST before any statement executes, so a program
+that fails analysis produces no output and no side effects at all.
+
+It rejects:
+
+| Problem | Example |
+| --- | --- |
+| Reference to an undeclared name | `print(total)` with no `let total` |
+| Assignment to an undeclared name | `total = 1` with no `let total` |
+| `break` / `continue` outside a loop | `if (x) { break; }` at the top level |
+| `return` outside a function | `return 1;` at the top level |
+
+and warns about code that can never run:
+
+```luma
+fn f() {
+  return 1;
+  print("unreachable");   // warning[semantic]: unreachable code
+}
+```
+
+Warnings are printed but do not stop the program.
+
+### 6.1 Scope rules the resolver enforces
+
+A name is visible from the point of its `let`/`fn` to the end of the enclosing
+block. Function *bodies* are analysed after the scope that contains them, which
+is what makes both of these legal:
+
+```luma
+fn even(n) { if (n == 0) { true } else { odd(n - 1) } }   // `odd` comes later
+fn odd(n)  { if (n == 0) { false } else { even(n - 1) } }
+
+fn f() { later }      // resolved against the whole enclosing scope
+let later = 1;
+```
+
+A function never inherits the loop it was defined inside, so this is an error:
+
+```luma
+while (true) {
+  let f = fn() { break; };   // error: 'break' outside of a loop
+}
+```
+
+### 6.2 What the resolver deliberately does not do
+
+It is a scope and control-flow checker, not a type checker. `1 + "a"` and
+`nil * 2` are decided at runtime, and a missing hash key is `nil` rather than an
+error — so `shape.hieght` is a runtime failure, not a static one.
+
+---
+
+## 7. Errors
+
+Every diagnostic carries a phase (`syntax`, `semantic` or `runtime`), a severity
+(`error` or `warning`), a message, a line/column, an underlined span, an optional
+`= help:` hint and, for runtime errors, a call stack. The standard rendering is:
 
 ```
 error[runtime]: operator '*' is not defined for number and nil
@@ -300,6 +357,10 @@ error[runtime]: operator '*' is not defined for number and nil
   = in describe(...)
 ```
 
+The parser and the resolver both keep going after the first problem, so a single
+run reports every syntax error and every semantic error it can find. Rendered
+groups are ordered by position and end with a tally.
+
 There is no user-level exception handling; errors abort the program. Two
 resource limits produce ordinary Luma errors rather than crashing the host:
 recursion deeper than 2000 frames, and loops exceeding 50,000,000 iterations.
@@ -307,7 +368,7 @@ Both are configurable through the `Interpreter` options.
 
 ---
 
-## 7. Standard library
+## 8. Standard library
 
 See the [builtin reference in the README](../README.md#standard-library).
 

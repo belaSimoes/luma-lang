@@ -1,0 +1,14 @@
+// Builtin- and closure-heavy: a pipeline over a sizeable array, plus hashes.
+let numbers = range(50000);
+
+let squares = map(numbers, fn(n) { n * n });
+let evens = filter(squares, fn(n) { n % 2 == 0 });
+let total = reduce(evens, 0, fn(acc, n) { acc + n });
+
+let counts = {};
+for (n in range(20000)) {
+  let key = n % 32;
+  counts[key] = if (contains(counts, key)) { counts[key] + 1 } else { 1 };
+}
+
+[total, len(counts)]

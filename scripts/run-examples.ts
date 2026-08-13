@@ -41,6 +41,7 @@ export function runExample(name: string): string {
   const source = readFileSync(join(EXAMPLES_DIR, name), "utf8");
   const result = run(source, { file: name });
   const parts = [...result.output];
+  if (result.warnings !== null) parts.push(result.warnings);
   if (!result.ok) parts.push(result.error!);
   return parts.join("\n");
 }

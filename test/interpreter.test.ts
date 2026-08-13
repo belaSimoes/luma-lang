@@ -63,9 +63,12 @@ describe("interpreter — expressions", () => {
 
   it("short-circuits logical operators and returns the deciding operand", () => {
     assert.equal(evaluate("nil || 42"), 42);
-    assert.equal(evaluate('"set" || boom'), "set");
-    assert.equal(evaluate("false && boom"), false);
     assert.equal(evaluate("1 && 2"), 2);
+    // `1 / 0` fails at runtime, so reaching it at all would throw. The operand
+    // is deliberately well-formed: an undefined name would be rejected
+    // statically by the resolver, before short-circuiting could matter.
+    assert.equal(evaluate('"set" || (1 / 0)'), "set");
+    assert.equal(evaluate("false && (1 / 0)"), false);
   });
 
   it("concatenates with + as soon as one side is a string", () => {

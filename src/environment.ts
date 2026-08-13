@@ -7,6 +7,15 @@
 
 import type { LumaValue } from "./values.ts";
 
+/**
+ * Returned by {@link Environment.lookup} when a name is unbound.
+ *
+ * A dedicated sentinel lets a single walk of the scope chain answer both "does
+ * this exist?" and "what is it?" — `nil` is a perfectly valid value, so
+ * `undefined` cannot carry that meaning.
+ */
+export const UNBOUND: unique symbol = Symbol("unbound");
+
 export class Environment {
   private readonly store = new Map<string, LumaValue>();
   private readonly parent: Environment | null;
@@ -34,15 +43,28 @@ export class Environment {
     return false;
   }
 
-  /** Look a name up through the scope chain. Returns `undefined` if unbound. */
-  get(name: string): LumaValue | undefined {
+  /**
+   * Look a name up through the scope chain in a single walk, returning
+   * {@link UNBOUND} when it does not exist. This is the hot path — every
+   * variable reference goes through it — so it deliberately avoids the
+   * `has()` + `get()` pair that would walk the chain twice.
+   */
+  lookup(name: string): LumaValue | typeof UNBOUND {
     let scope: Environment | null = this;
     while (scope !== null) {
+      // `nil` is stored as `null`, never as `undefined`, so a `undefined` result
+      // unambiguously means "not in this scope" — no second `has()` needed.
       const found = scope.store.get(name);
-      if (found !== undefined || scope.store.has(name)) return found;
+      if (found !== undefined) return found;
       scope = scope.parent;
     }
-    return undefined;
+    return UNBOUND;
+  }
+
+  /** Look a name up through the scope chain. Returns `undefined` if unbound. */
+  get(name: string): LumaValue | undefined {
+    const found = this.lookup(name);
+    return found === UNBOUND ? undefined : found;
   }
 
   /**

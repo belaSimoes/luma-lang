@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { parse } from "../src/parser.ts";
+import { type LumaError, toDiagnostics } from "../src/errors.ts";
 import type { Expression, ExpressionStatement, Program, Statement } from "../src/ast.ts";
 
 function firstStatement(source: string): Statement {
@@ -133,6 +134,18 @@ describe("parser — statements", () => {
   });
 });
 
+/** Collect every diagnostic the parser reports for a snippet. */
+function diagnosticsOf(source: string): LumaError[] {
+  try {
+    parse(source);
+    return [];
+  } catch (error) {
+    const diagnostics = toDiagnostics(error);
+    if (diagnostics === null) throw error;
+    return diagnostics;
+  }
+}
+
 describe("parser — diagnostics", () => {
   const invalid: Array<[string, RegExp]> = [
     ["let = 1;", /expected a variable name/],
@@ -150,16 +163,48 @@ describe("parser — diagnostics", () => {
 
   for (const [source, pattern] of invalid) {
     it(`rejects ${JSON.stringify(source)}`, () => {
-      assert.throws(() => parse(source), pattern);
+      const messages = diagnosticsOf(source).map((error) => error.message);
+      assert.ok(messages.length > 0, "expected at least one diagnostic");
+      assert.ok(
+        messages.some((message) => pattern.test(message)),
+        `no diagnostic matched ${pattern}; got ${JSON.stringify(messages)}`,
+      );
     });
   }
 
   it("points at the offending token", () => {
-    try {
-      parse("let a = 1;\nlet = 2;");
-      assert.fail("expected a syntax error");
-    } catch (error) {
-      assert.deepEqual((error as { position: unknown }).position, { line: 2, column: 5 });
-    }
+    const [first] = diagnosticsOf("let a = 1;\nlet = 2;");
+    assert.deepEqual(first?.position, { line: 2, column: 5 });
+  });
+});
+
+describe("parser — error recovery", () => {
+  it("reports every syntax error in one pass instead of stopping at the first", () => {
+    const diagnostics = diagnosticsOf("let a = ;\nprint(1)\nlet = 3;");
+
+    assert.equal(diagnostics.length, 2);
+    assert.deepEqual(
+      diagnostics.map((error) => error.position.line),
+      [1, 3],
+    );
+  });
+
+  it("resumes at the next statement so later code is still checked", () => {
+    const diagnostics = diagnosticsOf("let = 1;\nlet = 2;\nlet = 3;");
+    assert.equal(diagnostics.length, 3);
+  });
+
+  it("caps the report so a broken file does not emit a wall of cascades", () => {
+    const diagnostics = diagnosticsOf("let = 1;\n".repeat(40));
+    assert.ok(diagnostics.length <= 10, `expected at most 10, got ${diagnostics.length}`);
+  });
+
+  it("always makes progress, even when a rule fails without consuming input", () => {
+    // A regression guard: panic-mode recovery that does not advance loops forever.
+    assert.doesNotThrow(() => diagnosticsOf("} } } )".repeat(5)));
+  });
+
+  it("still parses cleanly when there is nothing wrong", () => {
+    assert.deepEqual(diagnosticsOf("let a = 1; print(a);"), []);
   });
 });

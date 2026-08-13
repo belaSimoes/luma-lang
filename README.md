@@ -48,14 +48,51 @@ open, and the parts that are usually hidden — precedence climbing, scope chain
 capture, error recovery — are the point rather than an implementation detail.
 
 It is deliberately complete rather than minimal: closures, first-class functions,
-mutable collections, `break`/`continue`, a REPL, a CLI, structured diagnostics with source
-snippets and call stacks, 219 tests, and a browser playground that runs the same code the
-CLI does.
+mutable collections, `break`/`continue`, a REPL, a CLI, a static analysis pass, structured
+diagnostics with source snippets and call stacks, 290 tests, and a browser playground that
+runs the same code the CLI does.
+
+## Mistakes are caught before anything runs
+
+Luma parses, then *analyses*, then executes. The resolver walks the AST and reports
+undefined names, misplaced `break`/`return` and unreachable code — so a typo can never
+leave you half-way through a job with the side effects already committed. Everything wrong
+is reported in one pass, not one error per run:
+
+```
+$ luma check examples/09_static_analysis.luma
+error[semantic]: undefined variable 'heigth'
+  --> 09_static_analysis.luma:17:11
+   |
+17 |   width * heigth
+   |           ^^^^^^
+   = help: did you mean 'height'?
+
+error[semantic]: 'break' outside of a loop
+  --> 09_static_analysis.luma:30:1
+   |
+30 | break;
+   | ^^^^^
+   = help: break may only appear inside a while or for loop
+
+error[semantic]: cannot assign to undeclared variable 'total'
+  --> 09_static_analysis.luma:33:1
+   |
+33 | total = area();
+   | ^^^^^
+   = help: use 'let total = ...' to declare it first
+
+3 errors found
+```
+
+The parser recovers too: a syntax error does not stop the run, it resynchronises at the
+next statement so the rest of the file is still checked.
 
 ## Quick start
 
-Requires **Node 22.6+** (Luma runs its own TypeScript sources directly via type stripping —
-there is no build step for development).
+Requires **Node 22.18+** or **24+** — the version where type stripping became the default,
+which is what lets Luma run its own TypeScript sources with no build step for development.
+CI covers both.
 
 ```bash
 git clone https://github.com/belaSimoes/luma-lang.git
@@ -77,6 +114,7 @@ npm run playground                       # build + serve the web playground loca
 | `luma` | start the interactive REPL |
 | `luma file.luma` | run a program |
 | `luma -e '<code>'` | run a snippet and echo its value |
+| `luma check file.luma` | report problems without running the program |
 | `luma ast file.luma` | dump the syntax tree as JSON |
 | `luma tokens file.luma` | dump the token stream as JSON |
 
@@ -172,26 +210,30 @@ stack overflow, and an unbounded loop hits a configurable iteration ceiling.
 ```
 source text
    │
-   ▼  src/lexer.ts        single pass, no regex, tracks line & column
+   ▼  src/lexer.ts        single pass, no regex, tracks spans
 tokens
    │
-   ▼  src/parser.ts       Pratt parser — precedence climbing
+   ▼  src/parser.ts       Pratt parser — precedence climbing, error recovery
 AST  (src/ast.ts)         plain objects discriminated by `kind`
    │
+   ▼  src/resolver.ts     static checks: names, control flow, reachability
+   │                      ── stops here if anything is wrong ──
    ▼  src/interpreter.ts  tree-walking evaluation over a scope chain
 value
 ```
 
 | File | Lines | Responsibility |
 | --- | --- | --- |
-| `src/lexer.ts` | ~230 | Characters → tokens, with positions for diagnostics |
-| `src/parser.ts` | ~430 | Tokens → AST via a Pratt parser |
+| `src/lexer.ts` | ~235 | Characters → tokens, with spans for diagnostics and tooling |
+| `src/parser.ts` | ~480 | Tokens → AST via a Pratt parser, recovering from errors |
 | `src/ast.ts` | ~160 | The node types, as a discriminated union |
-| `src/interpreter.ts` | ~480 | Evaluation, scopes, calls, control flow |
-| `src/environment.ts` | ~70 | The scope chain |
+| `src/resolver.ts` | ~315 | Static analysis: scopes, control flow, reachability |
+| `src/interpreter.ts` | ~540 | Evaluation, scopes, calls, control flow |
+| `src/environment.ts` | ~85 | The scope chain |
 | `src/values.ts` | ~150 | Runtime values, equality, formatting |
 | `src/builtins.ts` | ~320 | The standard library |
-| `src/errors.ts` | ~100 | Positioned errors and snippet rendering |
+| `src/errors.ts` | ~205 | Positioned diagnostics, snippet rendering, spelling hints |
+| `src/highlight.ts` | ~125 | Syntax highlighting, driven by the real lexer |
 
 ### Design notes
 
@@ -210,9 +252,43 @@ rare cases. As a bonus, `break` outside a loop is a real error instead of silenc
 bugs. Declarations (`let`, `fn`) deliberately evaluate to `nil` so their value is never
 mistaken for a result.
 
+**Why a separate resolver pass?** Two reasons. Correctness: a program that references an
+undefined name is broken whether or not that line happens to execute, and finding out
+*after* half the work has already been done is the worst time to learn it. And honesty
+about scope — deciding statically whether `break` belongs to a loop, or whether a name is
+visible, forces the scoping rules to be written down rather than implied by whatever the
+evaluator happens to do.
+
+**Why is the highlighter part of the language?** `src/highlight.ts` colours source by
+running the actual lexer, so it cannot drift from the parser the way a hand-written
+editor grammar does. It is a library module with its own tests — the playground just
+renders what it returns.
+
 **Why zero dependencies?** The point of the project is that nothing is delegated.
 TypeScript appears only as a devDependency, for typechecking and for compiling the browser
 build; the interpreter itself runs on Node with no toolchain at all.
+
+## Benchmarks
+
+```bash
+npm run bench              # all benchmarks
+npm run bench -- fib loop  # a subset
+```
+
+Best of 7 runs after 2 warm-ups, measuring parse + analyse + evaluate end to end
+(Node 24, Windows 11, i-class laptop — treat as relative, not absolute):
+
+| Benchmark | Time | What it stresses |
+| --- | ---: | --- |
+| `strings` | 5.7 ms | concatenation, `split`/`join`/`map` |
+| `collections` | 60.5 ms | a 50k-element pipeline plus hash writes |
+| `fib` | 73.4 ms | `fib(24)` — calls, scope creation, recursion |
+| `loop` | 195.8 ms | 400k iterations of read-modify-write |
+
+The suite exists to make optimisation claims checkable. It immediately earned its keep:
+variable reads used to walk the scope chain twice — once to ask whether a name existed,
+once to fetch it — which a single `lookup` returning a sentinel collapsed into one walk,
+worth **12% on `loop`** and 8% on `fib`.
 
 ## Standard library
 
@@ -255,30 +331,44 @@ a committed snapshot, so nothing here can drift out of date.
 | [`05_sorting.luma`](examples/05_sorting.luma) | quicksort and mergesort written in Luma |
 | [`06_word_count.luma`](examples/06_word_count.luma) | a text pipeline: tokenise, count, rank |
 | [`07_interpreter_in_luma.luma`](examples/07_interpreter_in_luma.luma) | a recursive-descent arithmetic parser — written *in* Luma |
-| [`08_diagnostics.luma`](examples/08_diagnostics.luma) | what a Luma error looks like (fails on purpose) |
+| [`08_diagnostics.luma`](examples/08_diagnostics.luma) | what a runtime error looks like (fails on purpose) |
+| [`09_static_analysis.luma`](examples/09_static_analysis.luma) | everything the resolver catches before running (fails on purpose) |
 
 ## Testing
 
 ```bash
-npm test          # 219 tests across lexer, parser, interpreter, builtins, errors, examples
+npm test          # 290 tests across every layer
 npm run typecheck # strict TypeScript, noUncheckedIndexedAccess included
 npm run build     # emits dist/ with type declarations
 ```
 
 The suite runs on Node's built-in test runner — no Jest, no Vitest, no config. It covers
-tokenisation and positions, a table of ~20 precedence cases asserted as fully parenthesised
-strings, evaluation semantics, every builtin including its failure modes, exact error
-positions and rendering, and an end-to-end snapshot of every example program.
+tokenisation and source spans, a table of ~20 precedence cases asserted as fully
+parenthesised strings, parser error recovery, every static check the resolver makes
+(including a table of programs that must *not* be flagged), evaluation semantics, every
+builtin and its failure modes, exact diagnostic positions and rendering, and an end-to-end
+snapshot of every example program.
+
+Two properties are worth calling out, because they catch whole classes of bug at once:
+
+- highlighting every example program and concatenating the segments must reproduce the
+  file byte for byte — a highlighter that drops or duplicates source fails instantly;
+- the resolver must report *nothing* for a table of valid programs, which is what keeps
+  static analysis from becoming a nuisance.
 
 ## Roadmap
 
 Ideas that would each teach something new, roughly in order of interest:
 
+- [x] A resolver pass with static diagnostics and spelling suggestions
+- [x] Parser error recovery, so one run reports every syntax error
+- [x] A benchmark suite to keep performance claims honest
+- [ ] Turn the resolver's scope walk into slot indices, so lookups become array reads
 - [ ] A bytecode VM behind the same front-end, to compare tree-walking against a stack machine
-- [ ] Constant folding and a resolver pass that turns name lookups into slot indices
+- [ ] Constant folding over the AST
 - [ ] `try`/`catch`, or a `Result`-style convention in the standard library
 - [ ] Modules (`import`) with a file-based resolver
-- [ ] A language server: syntax highlighting, diagnostics and go-to-definition reuse the AST
+- [ ] A language server — the resolver and `src/highlight.ts` are already most of one
 
 ## License
 

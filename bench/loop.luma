@@ -1,0 +1,8 @@
+// Variable-access heavy: a tight loop reading and writing the same bindings.
+let total = 0;
+let i = 0;
+while (i < 400000) {
+  total = total + i % 7;
+  i = i + 1;
+}
+total

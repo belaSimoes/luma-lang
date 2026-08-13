@@ -135,6 +135,12 @@ describe("builtins — higher order", () => {
     assert.equal(evaluate("reduce([1, 2], 0, fn(a, b) { a + b })"), 3);
   });
 
+  it("accepts a builtin as a callback, despite the extra index argument", () => {
+    assert.deepEqual(evaluate('map(["a", "b"], upper)'), ["A", "B"]);
+    assert.deepEqual(evaluate('map([[1, 2], [3]], len)'), [2, 1]);
+    assert.deepEqual(evaluate('filter(["", "x"], len)'), ["", "x"]);
+  });
+
   it("rejects non-functions", () => {
     assert.throws(() => evaluate("map([1], 2)"), /map expects a function, got number/);
   });

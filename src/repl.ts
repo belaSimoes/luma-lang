@@ -10,7 +10,7 @@ import { createInterface } from "node:readline";
 import { stdin, stdout } from "node:process";
 
 import { Interpreter } from "./interpreter.ts";
-import { LumaError, formatError } from "./errors.ts";
+import { LumaError, formatErrors, toDiagnostics } from "./errors.ts";
 import { parse } from "./parser.ts";
 import { inspect } from "./values.ts";
 
@@ -28,8 +28,12 @@ const HELP = `
 `;
 
 /** Heuristic: does this snippet fail only because the user is still typing? */
-function isIncomplete(error: LumaError): boolean {
-  return /end of input|unclosed|unterminated/i.test(error.message);
+function isIncomplete(error: unknown): boolean {
+  const diagnostics = toDiagnostics(error);
+  if (diagnostics === null || diagnostics.length === 0) return false;
+  // Only the *last* diagnostic can be "you are still typing"; anything before it
+  // is a genuine mistake that no amount of extra input will fix.
+  return /end of input|unclosed|unterminated/i.test(diagnostics.at(-1)!.message);
 }
 
 export function startRepl(): void {
@@ -59,7 +63,7 @@ export function startRepl(): void {
     try {
       parse(source);
     } catch (error) {
-      if (error instanceof LumaError && isIncomplete(error) && trimmed !== "") {
+      if (isIncomplete(error) && trimmed !== "") {
         setPrompt();
         rl.prompt();
         return;
@@ -78,6 +82,9 @@ export function startRepl(): void {
     } catch (error) {
       report(error, source);
     }
+    if (state.interpreter.warnings.length > 0) {
+      console.error(renderDiagnostics(state.interpreter.warnings, source));
+    }
     setPrompt();
     rl.prompt();
   });
@@ -88,12 +95,14 @@ export function startRepl(): void {
   });
 }
 
+function renderDiagnostics(diagnostics: LumaError[], source: string): string {
+  return formatErrors(diagnostics, source, { file: "repl", color: stdout.isTTY === true });
+}
+
 function report(error: unknown, source: string): void {
-  if (error instanceof LumaError) {
-    console.error(formatError(error, source, { file: "repl", color: stdout.isTTY === true }));
-    return;
-  }
-  throw error;
+  const diagnostics = toDiagnostics(error);
+  if (diagnostics === null) throw error;
+  console.error(renderDiagnostics(diagnostics, source));
 }
 
 /** Returns true when the command already re-prompted (or ended the session). */

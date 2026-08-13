@@ -21,8 +21,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Node 22.6+ is the floor: the sources are executed directly through
-        # type stripping, with no build step.
+        # Node 22.18+ is the floor: type stripping is on by default there, so the
+        # sources run directly with no build step.
         node: ["22.x", "24.x"]
         os: [ubuntu-latest, windows-latest]
 

@@ -56,6 +56,30 @@ describe("lexer", () => {
     ]);
   });
 
+  it("records the source span of every token", () => {
+    // `end` cannot be derived from `literal`: a string token holds its *decoded*
+    // value, so the span is the only way back to the original text.
+    const [ident, text] = tokenize(String.raw`abc "a\nb"`);
+    assert.deepEqual(ident!.position, { line: 1, column: 1 });
+    assert.deepEqual(ident!.end, { line: 1, column: 4 });
+    assert.equal(text!.literal, "a\nb");
+    assert.deepEqual(text!.position, { line: 1, column: 5 });
+    assert.deepEqual(text!.end, { line: 1, column: 11 });
+  });
+
+  it("gives spans that reconstruct the source exactly", () => {
+    const source = 'let x = "hi"; // note\nprint(x)';
+    const lineStarts = [0, source.indexOf("\n") + 1];
+    const offset = (p: { line: number; column: number }) => lineStarts[p.line - 1]! + p.column - 1;
+
+    for (const token of tokenize(source)) {
+      if (token.type === "EOF") continue;
+      const slice = source.slice(offset(token.position), offset(token.end));
+      assert.ok(slice.length > 0, `empty span for ${token.type}`);
+      if (token.type !== "STRING") assert.equal(slice, token.literal);
+    }
+  });
+
   it("tracks line and column for every token", () => {
     const tokens = tokenize("let x =\n  42;");
     assert.deepEqual(tokens[0]!.position, { line: 1, column: 1 });

@@ -1,0 +1,11 @@
+// String-heavy: concatenation, splitting and joining.
+let words = split("the quick brown fox jumps over the lazy dog", " ");
+
+let out = "";
+let i = 0;
+while (i < 4000) {
+  out = out + words[i % len(words)] + " ";
+  i = i + 1;
+}
+
+len(join(map(split(trim(out), " "), upper), "-"))

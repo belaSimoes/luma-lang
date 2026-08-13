@@ -65,7 +65,17 @@ export interface Token {
   type: TokenType;
   /** Raw lexeme for identifiers/operators, decoded value for strings. */
   literal: string;
+  /** Position of the token's first character. */
   position: Position;
+  /**
+   * Position just past the token's last character.
+   *
+   * `literal` cannot stand in for the source span — a string token carries its
+   * *decoded* value, so `"a\nb"` is 6 characters of source but 3 of literal.
+   * Tools that need to map a token back onto the text (syntax highlighting,
+   * editor spans) need both ends.
+   */
+  end: Position;
 }
 
 export const KEYWORDS: Record<string, TokenType> = {

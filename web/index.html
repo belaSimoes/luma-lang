@@ -147,21 +147,11 @@
 
       textarea, pre {
         margin: 0;
-        flex: 1;
         padding: 16px;
         font-family: var(--mono);
         font-size: 13.5px;
         line-height: 1.65;
         tab-size: 2;
-      }
-
-      textarea {
-        border: 0;
-        resize: vertical;
-        background: transparent;
-        color: var(--text);
-        outline: none;
-        min-height: 380px;
       }
 
       pre {
@@ -171,7 +161,65 @@
         color: #c8d0e0;
       }
 
+      #output {
+        flex: 1;
+      }
+
+      /* The editor stacks a transparent textarea on top of the highlighted
+         copy; both must lay text out identically for the caret to line up. */
+      .editor {
+        position: relative;
+        flex: 1;
+        min-height: 380px;
+      }
+
+      .editor > .highlight,
+      .editor > textarea {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow: auto;
+        border: 0;
+      }
+
+      .editor > textarea {
+        resize: none;
+        background: transparent;
+        color: transparent;
+        caret-color: var(--text);
+        outline: none;
+      }
+
+      .editor > .highlight {
+        pointer-events: none;
+        color: var(--text);
+      }
+
+      /* Token colours, keyed to the kinds src/highlight.ts emits. */
+      .tok-keyword { color: #bb9af7; }
+      .tok-number { color: #ff9e64; }
+      .tok-string { color: var(--accent-2); }
+      .tok-comment { color: var(--muted); font-style: italic; }
+      .tok-builtin { color: #7dcfff; }
+      .tok-identifier { color: var(--text); }
+      .tok-operator { color: #89ddff; }
+      .tok-punctuation { color: var(--muted); }
+
+      .status {
+        float: right;
+        font-weight: 500;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+      .status.ok { color: var(--accent-2); }
+      .status.bad { color: var(--error); }
+      .status.warn { color: #e0af68; }
+
       pre .err { color: var(--error); }
+      pre .warn { color: #e0af68; }
       pre .value { color: var(--accent-2); }
       pre .meta { color: var(--muted); }
 
@@ -212,6 +260,7 @@
       <div class="toolbar">
         <button class="primary" id="run">Run &nbsp;<span class="meta">Ctrl+Enter</span></button>
         <select id="examples" aria-label="Load an example"></select>
+        <button id="check">Check</button>
         <button id="tokens">Tokens</button>
         <button id="ast">AST</button>
         <span class="hint">Everything below executes locally — nothing is sent anywhere.</span>
@@ -219,8 +268,23 @@
 
       <div class="grid">
         <section class="pane">
-          <h2>Source</h2>
-          <textarea id="source" spellcheck="false" aria-label="Luma source code"></textarea>
+          <h2>Source <span id="status" class="status"></span></h2>
+          <!--
+            The editor is a transparent textarea layered over a <pre> that holds
+            the highlighted copy of the same text. The highlighter is driven by
+            Luma's own lexer, so the colours can never disagree with the parser.
+          -->
+          <div class="editor">
+            <pre class="highlight" id="highlight" aria-hidden="true"></pre>
+            <textarea
+              id="source"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              autocorrect="off"
+              aria-label="Luma source code"
+            ></textarea>
+          </div>
         </section>
         <section class="pane">
           <h2>Output</h2>
@@ -234,7 +298,15 @@
     </div>
 
     <script type="module">
-      import { run, tokenize, parse, inspect } from "./dist/index.js";
+      import {
+        run,
+        check,
+        tokenize,
+        parse,
+        inspect,
+        builtinNames,
+        highlightHtml,
+      } from "./dist/index.js";
 
       const EXAMPLES = {
         "Tour of the language": `// Everything in Luma is an expression.
@@ -310,11 +382,32 @@ fn describe(shape) {
 }
 
 describe({"width": 5, "height": 5})`,
+
+        "Static analysis": `// None of this runs: the resolver rejects the program first,
+// and reports every problem in one pass. Press Check too.
+let width = 10;
+let height = 4;
+
+print("never printed");
+
+fn area() {
+  width * heigth
+}
+
+fn classify(n) {
+  return "small";
+  print("unreachable");
+}
+
+break;
+total = area();`,
       };
 
       const sourceEl = document.getElementById("source");
+      const highlightEl = document.getElementById("highlight");
       const outputEl = document.getElementById("output");
       const selectEl = document.getElementById("examples");
+      const statusEl = document.getElementById("status");
 
       for (const label of Object.keys(EXAMPLES)) {
         const option = document.createElement("option");
@@ -326,6 +419,40 @@ describe({"width": 5, "height": 5})`,
       const escapeHtml = (text) =>
         text.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]);
 
+      // ---------------------------------------------------------- highlighting
+
+      // `highlightHtml` is Luma's own module: it drives the colours from the
+      // real lexer, so the highlighter can never disagree with the parser. It
+      // is covered by the test-suite rather than living here as loose script.
+      const BUILTINS = builtinNames();
+
+      function syncHighlight() {
+        // The trailing newline keeps the last line visible while scrolling.
+        highlightEl.innerHTML = `${highlightHtml(sourceEl.value, { builtins: BUILTINS })}\n`;
+        highlightEl.scrollTop = sourceEl.scrollTop;
+        highlightEl.scrollLeft = sourceEl.scrollLeft;
+      }
+
+      // ------------------------------------------------------------ diagnostics
+
+      function refreshStatus() {
+        const result = check(sourceEl.value);
+        if (!result.ok) {
+          const label = result.errorCount === 1 ? "error" : "errors";
+          statusEl.textContent = `${result.errorCount} ${label}`;
+          statusEl.className = "status bad";
+        } else if (result.warningCount > 0) {
+          const label = result.warningCount === 1 ? "warning" : "warnings";
+          statusEl.textContent = `${result.warningCount} ${label}`;
+          statusEl.className = "status warn";
+        } else {
+          statusEl.textContent = "no problems";
+          statusEl.className = "status ok";
+        }
+      }
+
+      // ----------------------------------------------------------------- panes
+
       function render(parts) {
         outputEl.innerHTML = parts.length
           ? parts.map(([kind, text]) => `<span class="${kind}">${escapeHtml(text)}</span>`).join("\n")
@@ -336,6 +463,7 @@ describe({"width": 5, "height": 5})`,
         const result = run(sourceEl.value);
         const parts = result.output.map((line) => ["", line]);
 
+        if (result.warnings !== null) parts.push(["warn", result.warnings]);
         if (!result.ok) {
           parts.push(["err", result.error]);
         } else if (result.value !== null) {
@@ -344,38 +472,72 @@ describe({"width": 5, "height": 5})`,
         render(parts);
       }
 
+      function report() {
+        const result = check(sourceEl.value);
+        render(
+          result.report === null
+            ? [["value", "no problems found"]]
+            : [[result.ok ? "warn" : "err", result.report]],
+        );
+      }
+
       function dump(kind) {
         try {
           const data = kind === "ast" ? parse(sourceEl.value) : tokenize(sourceEl.value);
           render([["", JSON.stringify(data, null, 2)]]);
         } catch (error) {
-          render([["err", String(error.message ?? error)]]);
+          render([["err", String(error?.message ?? error)]]);
         }
       }
 
+      // ---------------------------------------------------------------- wiring
+
       document.getElementById("run").addEventListener("click", execute);
+      document.getElementById("check").addEventListener("click", report);
       document.getElementById("ast").addEventListener("click", () => dump("ast"));
       document.getElementById("tokens").addEventListener("click", () => dump("tokens"));
 
       selectEl.addEventListener("change", () => {
-        sourceEl.value = EXAMPLES[selectEl.value];
+        load(EXAMPLES[selectEl.value]);
         execute();
+      });
+
+      let statusTimer = 0;
+      sourceEl.addEventListener("input", () => {
+        syncHighlight();
+        // Analysis is fast, but debouncing keeps typing perfectly smooth on a
+        // large program and avoids flashing errors mid-word.
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(refreshStatus, 250);
+      });
+
+      sourceEl.addEventListener("scroll", () => {
+        highlightEl.scrollTop = sourceEl.scrollTop;
+        highlightEl.scrollLeft = sourceEl.scrollLeft;
       });
 
       sourceEl.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
           execute();
+          return;
         }
         if (event.key === "Tab") {
           event.preventDefault();
           const { selectionStart: start, selectionEnd: end, value } = sourceEl;
           sourceEl.value = `${value.slice(0, start)}  ${value.slice(end)}`;
           sourceEl.selectionStart = sourceEl.selectionEnd = start + 2;
+          sourceEl.dispatchEvent(new Event("input"));
         }
       });
 
-      sourceEl.value = EXAMPLES[Object.keys(EXAMPLES)[0]];
+      function load(source) {
+        sourceEl.value = source;
+        syncHighlight();
+        refreshStatus();
+      }
+
+      load(EXAMPLES[Object.keys(EXAMPLES)[0]]);
       execute();
     </script>
   </body>

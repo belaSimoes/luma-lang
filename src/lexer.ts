@@ -236,8 +236,12 @@ export class Lexer {
     return { line: this.line, column: this.column };
   }
 
+  /**
+   * Build a token. Called once the lexeme has been consumed, so the cursor is
+   * sitting exactly at the token's end.
+   */
   private token(type: TokenType, literal: string, position: Position): Token {
-    return { type, literal, position };
+    return { type, literal, position, end: this.position() };
   }
 }
 

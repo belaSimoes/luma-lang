@@ -1,0 +1,27 @@
+warning[semantic]: unreachable code: the 'return' above always leaves this block
+  --> 09_static_analysis.luma:26:3
+   |
+26 |   print("unreachable");
+   |   ^
+error[semantic]: undefined variable 'heigth'
+  --> 09_static_analysis.luma:17:11
+   |
+17 |   width * heigth
+   |           ^^^^^^
+   = help: did you mean 'height'?
+
+error[semantic]: 'break' outside of a loop
+  --> 09_static_analysis.luma:30:1
+   |
+30 | break;
+   | ^^^^^
+   = help: break may only appear inside a while or for loop
+
+error[semantic]: cannot assign to undeclared variable 'total'
+  --> 09_static_analysis.luma:33:1
+   |
+33 | total = area();
+   | ^^^^^
+   = help: use 'let total = ...' to declare it first
+
+3 errors found

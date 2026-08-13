@@ -19,13 +19,16 @@ import type {
   Program,
   Statement,
 } from "./ast.ts";
-import { SyntaxError_ } from "./errors.ts";
+import { LumaError, LumaErrorGroup, SyntaxError_ } from "./errors.ts";
 import { Lexer } from "./lexer.ts";
 import { describeToken, type Position, type Token, type TokenType } from "./token.ts";
 
 const LOWEST = 0;
 const ASSIGNMENT = 1;
 const PREFIX = 8;
+
+/** Beyond this many syntax errors, later ones are almost certainly cascades. */
+const MAX_SYNTAX_ERRORS = 10;
 
 /** Binding power of each infix/postfix operator. */
 const PRECEDENCE: Partial<Record<TokenType, number>> = {
@@ -58,13 +61,62 @@ export class Parser {
     this.tokens = new Lexer(source).tokenize();
   }
 
+  /**
+   * Parse the whole program, recovering after each failed statement so that one
+   * run reports every syntax error instead of only the first.
+   *
+   * Recovery is classic panic mode: record the error, then skip tokens until a
+   * point where a new statement can plausibly begin. Cascading nonsense is
+   * capped by {@link MAX_SYNTAX_ERRORS}.
+   */
   parseProgram(): Program {
     const position = this.current().position;
     const body: Statement[] = [];
+    const errors: LumaError[] = [];
+
     while (!this.currentIs("EOF")) {
-      body.push(this.parseStatement());
+      const before = this.cursor;
+      try {
+        body.push(this.parseStatement());
+      } catch (error) {
+        if (!(error instanceof LumaError)) throw error;
+        errors.push(error);
+        if (errors.length >= MAX_SYNTAX_ERRORS) break;
+        this.synchronize(before);
+      }
     }
+
+    if (errors.length > 0) throw new LumaErrorGroup(errors);
     return { kind: "Program", body, position };
+  }
+
+  /**
+   * Skip to the next likely statement boundary. Always consumes at least one
+   * token — `startedAt` guards against a rule that failed without advancing,
+   * which would otherwise spin forever.
+   */
+  private synchronize(startedAt: number): void {
+    if (this.cursor === startedAt) this.advance();
+
+    while (!this.currentIs("EOF")) {
+      if (this.tokens[this.cursor - 1]?.type === "SEMICOLON") return;
+      switch (this.current().type) {
+        case "LET":
+        case "FN":
+        case "IF":
+        case "WHILE":
+        case "FOR":
+        case "RETURN":
+        case "BREAK":
+        case "CONTINUE":
+          return;
+        case "RBRACE":
+          this.advance();
+          return;
+        default:
+          this.advance();
+      }
+    }
   }
 
   // --------------------------------------------------------------- statements

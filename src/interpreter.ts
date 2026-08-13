@@ -19,9 +19,10 @@ import type {
   Program,
   Statement,
 } from "./ast.ts";
-import { RuntimeError } from "./errors.ts";
-import { Environment } from "./environment.ts";
+import { LumaError, LumaErrorGroup, RuntimeError } from "./errors.ts";
+import { Environment, UNBOUND } from "./environment.ts";
 import { parse } from "./parser.ts";
+import { resolve } from "./resolver.ts";
 import { createBuiltins } from "./builtins.ts";
 import type { Position } from "./token.ts";
 import {
@@ -67,6 +68,8 @@ export class Interpreter {
   private readonly frames: string[] = [];
   /** Position of the node being evaluated, used to position builtin errors. */
   private here: Position = { line: 1, column: 1 };
+  /** Non-fatal diagnostics from the last {@link run}, e.g. unreachable code. */
+  warnings: LumaError[] = [];
 
   constructor(options: InterpreterOptions = {}) {
     this.stdout = options.stdout ?? ((line) => console.log(line));
@@ -79,22 +82,64 @@ export class Interpreter {
     }
   }
 
-  /** Parse and evaluate a program, returning the value of its last statement. */
+  /**
+   * Parse, analyse and evaluate a program, returning the value of its last
+   * statement.
+   *
+   * The resolver runs in between, so undefined variables and stray
+   * `break`/`return` are reported before any side effect happens. Warnings it
+   * produces are collected in {@link warnings} for the caller to display.
+   */
   run(source: string): LumaValue {
-    return this.evalProgram(parse(source));
+    const program = parse(source);
+    const { errors, warnings } = resolve(program, { globals: this.globals.names() });
+
+    this.warnings = warnings;
+    if (errors.length > 0) throw new LumaErrorGroup(errors);
+
+    return this.evalProgram(program);
   }
 
   evalProgram(program: Program, env: Environment = this.globals): LumaValue {
     let result: LumaValue = null;
-    for (const statement of program.body) {
-      result = this.evalStatement(statement, env);
+    try {
+      for (const statement of program.body) {
+        result = this.evalStatement(statement, env);
+      }
+    } catch (error) {
+      // A `return`/`break`/`continue` that escaped every construct that could
+      // have caught it. The resolver rejects these statically, but a caller may
+      // evaluate a hand-built AST, and an internal object must never surface as
+      // an uncaught host exception.
+      throw this.describeStraySignal(error);
     }
     return result;
+  }
+
+  private describeStraySignal(error: unknown): unknown {
+    if (error instanceof ReturnSignal) {
+      return new RuntimeError("'return' outside of a function", this.here, {
+        frames: [...this.frames].reverse(),
+      });
+    }
+    if (error instanceof BreakSignal) {
+      return new RuntimeError("'break' outside of a loop", this.here, {
+        frames: [...this.frames].reverse(),
+      });
+    }
+    if (error instanceof ContinueSignal) {
+      return new RuntimeError("'continue' outside of a loop", this.here, {
+        frames: [...this.frames].reverse(),
+      });
+    }
+    return error;
   }
 
   // -------------------------------------------------------------- statements
 
   private evalStatement(node: Statement, env: Environment): LumaValue {
+    this.here = node.position;
+
     switch (node.kind) {
       case "LetStatement": {
         const value = this.evalExpression(node.value, env);
@@ -200,10 +245,11 @@ export class Interpreter {
         return null;
 
       case "Identifier": {
-        if (!env.has(node.name)) {
+        const value = env.lookup(node.name);
+        if (value === UNBOUND) {
           this.fail(`undefined variable '${node.name}'`, node.position, node.name.length);
         }
-        return env.get(node.name) ?? null;
+        return value;
       }
 
       case "ArrayLiteral":
@@ -486,14 +532,9 @@ export class Interpreter {
       print: (text) => this.stdout(text),
       // Builtins offer callbacks more arguments than most callers want
       // (`map` also passes the index), so extra ones are dropped rather than
-      // rejected. Direct user-level calls stay strict.
-      call: (callee, args) => {
-        const trimmed =
-          callee instanceof LumaFunction && args.length > callee.parameters.length
-            ? args.slice(0, callee.parameters.length)
-            : args;
-        return this.call(callee, trimmed, position);
-      },
+      // rejected — for user functions and for builtins alike, which is what
+      // makes `map(words, upper)` work. Direct user-level calls stay strict.
+      call: (callee, args) => this.call(callee, trimArguments(callee, args), position),
       fail: (message) => this.fail(message, position),
     };
   }
@@ -536,8 +577,31 @@ export class Interpreter {
   }
 
   private fail(message: string, position: Position, span = 1): never {
-    throw new RuntimeError(message, position, [...this.frames].reverse(), span);
+    throw new RuntimeError(message, position, {
+      frames: [...this.frames].reverse(),
+      span,
+    });
   }
+}
+
+/**
+ * Drop arguments a callback did not ask for.
+ *
+ * `map` hands its callback `(item, index)`, but most callbacks — including
+ * builtins such as `upper` — only want the first. Extra arguments are dropped
+ * rather than rejected, so `map(words, upper)` behaves the way it reads.
+ */
+function trimArguments(callee: LumaValue, args: LumaValue[]): LumaValue[] {
+  if (callee instanceof LumaFunction) {
+    return args.length > callee.parameters.length
+      ? args.slice(0, callee.parameters.length)
+      : args;
+  }
+  if (callee instanceof LumaBuiltin) {
+    const [, max] = callee.arity;
+    return args.length > max ? args.slice(0, max) : args;
+  }
+  return args;
 }
 
 function describeCallee(callee: Expression): string {

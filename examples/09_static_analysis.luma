@@ -1,0 +1,33 @@
+// This example never runs: the resolver rejects it first.
+//
+// Nothing below is printed, because Luma analyses the whole program before
+// executing a single statement — so a typo cannot leave you half-way through a
+// job with the side effects already committed. Every problem is reported at
+// once, rather than one per run.
+//
+// Try it with:  luma check examples/09_static_analysis.luma
+
+let width = 10;
+let height = 4;
+
+print("this line never runs");
+
+fn area() {
+  // A typo. The resolver knows every name in scope and suggests the closest.
+  width * heigth
+}
+
+fn classify(n) {
+  if (n > 100) {
+    return "large";
+  }
+  return "small";
+  // Nothing after a return can ever execute.
+  print("unreachable");
+}
+
+// `break` only means something inside a loop.
+break;
+
+// `total` was never declared — assignment does not create variables in Luma.
+total = area();
