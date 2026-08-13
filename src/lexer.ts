@@ -5,8 +5,17 @@
  * the position of its *first* character so diagnostics can point at it.
  */
 
-import { KEYWORDS, type Position, type Token, type TokenType } from "./token.ts";
+import {
+  KEYWORDS,
+  type Position,
+  type TemplatePart,
+  type Token,
+  type TokenType,
+} from "./token.ts";
 import { SyntaxError_ } from "./errors.ts";
+
+/** Byte-order mark: editors on Windows prepend one to UTF-8 files. */
+const BOM = String.fromCharCode(0xfeff);
 
 const ESCAPES: Record<string, string> = {
   n: "\n",
@@ -16,16 +25,27 @@ const ESCAPES: Record<string, string> = {
   '"': '"',
   "'": "'",
   "\\": "\\",
+  // Escape hatches for interpolation: `"\{"` is a literal brace.
+  "{": "{",
+  "}": "}",
 };
 
 export class Lexer {
   private readonly source: string;
   private index = 0;
-  private line = 1;
-  private column = 1;
+  private line: number;
+  private column: number;
 
-  constructor(source: string) {
+  /**
+   * @param source text to tokenize
+   * @param origin position the text starts at in the *original* file. Sub-lexing
+   *   an interpolated expression passes its real position so every diagnostic
+   *   inside `"total: {1 / 0}"` lands on the right line and column.
+   */
+  constructor(source: string, origin: Position = { line: 1, column: 1 }) {
     this.source = source;
+    this.line = origin.line;
+    this.column = origin.column;
   }
 
   /** Tokenize the whole input, always terminated by a single EOF token. */
@@ -89,9 +109,26 @@ export class Lexer {
     return this.token(KEYWORDS[raw] ?? "IDENT", raw, position);
   }
 
+  /**
+   * Read a string literal, splitting it into parts at `{…}` interpolations.
+   *
+   * A string with no interpolation lexes to a plain `STRING`, so the common
+   * case stays as cheap as it was. Otherwise a `TEMPLATE` token carries the
+   * pieces, and each embedded expression keeps the absolute position it started
+   * at so diagnostics inside it point at the right column.
+   */
   private readString(position: Position): Token {
     const quote = this.advance();
+    const parts: TemplatePart[] = [];
     let value = "";
+
+    const flush = (): void => {
+      if (value !== "") {
+        parts.push({ kind: "text", value });
+        value = "";
+      }
+    };
+
     for (;;) {
       const ch = this.peek();
       if (ch === "") {
@@ -103,12 +140,20 @@ export class Lexer {
           position,
         );
       }
+
+      if (ch === "{") {
+        flush();
+        parts.push(this.readInterpolation());
+        continue;
+      }
+
       this.advance();
       if (ch === quote) break;
       if (ch !== "\\") {
         value += ch;
         continue;
       }
+
       const escape = this.peek();
       if (escape === "") {
         throw new SyntaxError_("unterminated escape sequence", this.position());
@@ -120,7 +165,72 @@ export class Lexer {
       this.advance();
       value += decoded;
     }
-    return this.token("STRING", value, position);
+
+    if (parts.length === 0) return this.token("STRING", value, position);
+
+    flush();
+    const token = this.token("TEMPLATE", "", position);
+    token.parts = parts;
+    return token;
+  }
+
+  /**
+   * Consume a `{ … }` hole inside a string literal.
+   *
+   * The contents are captured as raw source rather than tokenized here: the
+   * parser re-lexes them, which keeps interpolation from having to duplicate
+   * the whole expression grammar. Braces, strings and comments are tracked only
+   * closely enough to find the matching `}`.
+   */
+  private readInterpolation(): TemplatePart {
+    const opened = this.position();
+    this.advance(); // `{`
+
+    const start = this.index;
+    const startPosition = this.position();
+    let depth = 1;
+
+    for (;;) {
+      const ch = this.peek();
+      if (ch === "" || ch === "\n") {
+        throw new SyntaxError_("unterminated interpolation: expected '}'", opened);
+      }
+      if (ch === '"' || ch === "'") {
+        this.skipNestedString(ch);
+        continue;
+      }
+      if (ch === "{") depth += 1;
+      if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      this.advance();
+    }
+
+    const source = this.source.slice(start, this.index);
+    this.advance(); // `}`
+
+    if (source.trim() === "") {
+      throw new SyntaxError_("empty interpolation: expected an expression", opened);
+    }
+    return { kind: "expression", source, position: startPosition };
+  }
+
+  /** Skip over a string nested inside an interpolation, escapes included. */
+  private skipNestedString(quote: string): void {
+    this.advance(); // opening quote
+    for (;;) {
+      const ch = this.peek();
+      if (ch === "" || ch === "\n") {
+        throw new SyntaxError_("unterminated string literal", this.position());
+      }
+      this.advance();
+      if (ch === "\\") {
+        this.advance();
+        continue;
+      }
+      if (ch === quote) return;
+    }
   }
 
   private readOperator(position: Position): Token {
@@ -145,18 +255,20 @@ export class Lexer {
         if (nextCh === "&") return two("AND");
         break;
       case "|":
-        if (nextCh === "|") return two("OR");
-        break;
+        // A single `|` separates alternatives in a match pattern.
+        return nextCh === "|" ? two("OR") : this.token("PIPE", ch, position);
       case "+":
-        return this.token("PLUS", ch, position);
+        return nextCh === "=" ? two("PLUS_ASSIGN") : this.token("PLUS", ch, position);
       case "-":
+        if (nextCh === "=") return two("MINUS_ASSIGN");
+        if (nextCh === ">") return two("ARROW");
         return this.token("MINUS", ch, position);
       case "*":
-        return this.token("STAR", ch, position);
+        return nextCh === "=" ? two("STAR_ASSIGN") : this.token("STAR", ch, position);
       case "/":
-        return this.token("SLASH", ch, position);
+        return nextCh === "=" ? two("SLASH_ASSIGN") : this.token("SLASH", ch, position);
       case "%":
-        return this.token("PERCENT", ch, position);
+        return nextCh === "=" ? two("PERCENT_ASSIGN") : this.token("PERCENT", ch, position);
       case ",":
         return this.token("COMMA", ch, position);
       case ";":
@@ -164,6 +276,11 @@ export class Lexer {
       case ":":
         return this.token("COLON", ch, position);
       case ".":
+        if (nextCh === "." && this.peek(1) === ".") {
+          this.advance();
+          this.advance();
+          return this.token("ELLIPSIS", "...", position);
+        }
         return this.token("DOT", ch, position);
       case "(":
         return this.token("LPAREN", ch, position);
@@ -185,7 +302,10 @@ export class Lexer {
   private skipTrivia(): void {
     for (;;) {
       const ch = this.peek();
-      if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
+      // U+FEFF is the byte-order mark. Editors on Windows write one at the
+      // start of a UTF-8 file, and refusing to lex those would be a papercut
+      // with no upside.
+      if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === BOM) {
         this.advance();
         continue;
       }
@@ -258,6 +378,6 @@ function isIdentPart(ch: string): boolean {
 }
 
 /** Convenience helper used by tests and tooling. */
-export function tokenize(source: string): Token[] {
-  return new Lexer(source).tokenize();
+export function tokenize(source: string, origin?: Position): Token[] {
+  return new Lexer(source, origin).tokenize();
 }

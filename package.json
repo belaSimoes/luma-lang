@@ -1,6 +1,6 @@
 {
   "name": "luma-lang",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Luma — a small, expressive programming language: hand-written lexer, Pratt parser and tree-walking interpreter in TypeScript, with zero runtime dependencies.",
   "type": "module",
   "license": "MIT",
@@ -13,7 +13,10 @@
     "parser",
     "pratt-parser",
     "typescript",
-    "repl"
+    "repl",
+    "pattern-matching",
+    "debugger",
+    "time-travel-debugging"
   ],
   "engines": {
     "node": ">=22.18.0"

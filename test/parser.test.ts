@@ -36,7 +36,13 @@ function render(node: Expression): string {
     case "LogicalExpression":
       return `(${render(node.left)} ${node.operator} ${render(node.right)})`;
     case "AssignExpression":
-      return `(${render(node.target)} = ${render(node.value)})`;
+      return `(${render(node.target)} ${node.operator ?? ""}= ${render(node.value)})`;
+    case "TemplateLiteral":
+      return `\`${node.parts
+        .map((part) => (part.kind === "text" ? part.value : `{${render(part.value)}}`))
+        .join("")}\``;
+    case "MatchExpression":
+      return `match(${render(node.subject)})`;
     case "CallExpression":
       return `${render(node.callee)}(${node.args.map(render).join(", ")})`;
     case "IndexExpression":

@@ -25,6 +25,13 @@ export {
   type ResolveResult,
 } from "./resolver.ts";
 export {
+  TraceRecorder,
+  type RecorderOptions,
+  type StepKind,
+  type TraceScope,
+  type TraceStep,
+} from "./tracer.ts";
+export {
   LumaError,
   LumaErrorGroup,
   RuntimeError,
@@ -53,6 +60,7 @@ import { formatErrors, toDiagnostics } from "./errors.ts";
 import { parse } from "./parser.ts";
 import { resolve } from "./resolver.ts";
 import { createBuiltins } from "./builtins.ts";
+import { TraceRecorder, type TraceStep } from "./tracer.ts";
 import { inspect, type LumaValue } from "./values.ts";
 
 export interface RunResult {
@@ -145,6 +153,61 @@ export function check(source: string, options: { file?: string } = {}): CheckRes
     warningCount: warnings.length,
     ok: errors.length === 0,
   };
+}
+
+export interface TraceResult {
+  /** The recorded timeline, in execution order. */
+  steps: TraceStep[];
+  /** Everything `print` wrote. */
+  output: string[];
+  /** Rendered diagnostics if the program failed, otherwise `null`. */
+  error: string | null;
+  /** True when recording stopped early because the step budget ran out. */
+  truncated: boolean;
+  ok: boolean;
+}
+
+/**
+ * Run a program while recording an execution timeline.
+ *
+ * A failing program still returns everything recorded up to the failure, which
+ * is usually the interesting part — you can step back from the error and watch
+ * how the state got there.
+ */
+export function trace(
+  source: string,
+  options: InterpreterOptions & { file?: string; maxSteps?: number } = {},
+): TraceResult {
+  const recorder = new TraceRecorder(source, {
+    maxSteps: options.maxSteps,
+    // Builtins live in the global scope and would drown every snapshot.
+    hide: builtinNames(),
+  });
+
+  const output: string[] = [];
+  const interpreter = new Interpreter({
+    ...options,
+    recorder,
+    stdout: (line) => {
+      output.push(line);
+      options.stdout?.(line);
+    },
+  });
+
+  try {
+    interpreter.run(source);
+    return { steps: recorder.steps, output, error: null, truncated: recorder.truncated, ok: true };
+  } catch (error) {
+    const diagnostics = toDiagnostics(error);
+    if (diagnostics === null) throw error;
+    return {
+      steps: recorder.steps,
+      output,
+      error: formatErrors(diagnostics, source, { file: options.file, color: false }),
+      truncated: recorder.truncated,
+      ok: false,
+    };
+  }
 }
 
 /**

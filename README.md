@@ -22,22 +22,25 @@ No parser generator, no runtime dependencies, no magic.
 // Functions are values, and they close over their scope.
 fn counter(start) {
   let n = start;
-  fn() { n = n + 1; n }
+  fn() { n += 1; n }
 }
 
 let tick = counter(0);
-print(tick(), tick(), tick());          // 1 2 3
+print("{tick()} {tick()} {tick()}");     //=> 1 2 3
 
-// Collections and a pipeline over them.
-let people = [
-  {"name": "Ada", "age": 36},
-  {"name": "Grace", "age": 45},
-  {"name": "Alan", "age": 41}
-];
+// Pattern matching destructures instead of interrogating.
+fn describe(value) {
+  match (value) {
+    0 -> "zero",
+    [first, ...rest] -> "starts with {first}, then {len(rest)} more",
+    {"type": "circle", "radius": r} -> "a circle of area {round(3.14159 * r * r)}",
+    n if type(n) == "string" -> "the string \"{n}\"",
+    _ -> "something else"
+  }
+}
 
-let youngest_first = sort(people, fn(a, b) { a.age - b.age });
-print(join(map(youngest_first, fn(p) { p.name }), ", "));
-//=> Ada, Alan, Grace
+print(describe([1, 2, 3]));              //=> starts with 1, then 2 more
+print(describe({"type": "circle", "radius": 3}));   //=> a circle of area 28
 ```
 
 ## Why this project exists
@@ -47,10 +50,40 @@ and getting `7`. Luma is that gap, made readable: every stage is a small file yo
 open, and the parts that are usually hidden — precedence climbing, scope chains, closure
 capture, error recovery — are the point rather than an implementation detail.
 
-It is deliberately complete rather than minimal: closures, first-class functions,
-mutable collections, `break`/`continue`, a REPL, a CLI, a static analysis pass, structured
-diagnostics with source snippets and call stacks, 290 tests, and a browser playground that
-runs the same code the CLI does.
+It is deliberately complete rather than minimal: closures, pattern matching, string
+interpolation, mutable collections, a REPL, a CLI, a static analysis pass, structured
+diagnostics with source snippets and call stacks, a time-travel debugger, 394 tests, and a
+browser playground that runs the same code the CLI does.
+
+## The differentiator: a time-travel debugger
+
+Open the [playground](https://belasimoes.github.io/luma-lang/), press **Debug**, and scrub
+through the execution — forwards *and backwards*. At every step you see the line about to
+run, every variable in scope, and the call stack.
+
+A tree-walking interpreter is a plain recursive function, so *pausing* one would need
+coroutines or a rewritten evaluator. Recording it does not: the interpreter calls into a
+recorder at each statement and call boundary, and the recorder freezes a snapshot of where
+execution was and what everything held. Scrubbing that timeline afterwards gives you
+everything a stepping debugger does, plus the step backwards it cannot.
+
+Values are stringified as they are captured, so a later mutation cannot rewrite history —
+step back and an array shows what it *was*, not what it became.
+
+The same recording drives the CLI:
+
+```
+$ luma trace fizz.luma
+   1   fn double(n) { n * 2 }
+   2   let total = 0;   [double = <fn double(n)>]
+   3   for (i in range(3)) {   [total = 0]
+   4   total += double(i);   [i = 0]
+   4 →   double(0)   [n = 0]
+   1     fn double(n) { n * 2 }
+   4 ←   => 0
+   4   total += double(i);   [i = 1]
+   ...
+```
 
 ## Mistakes are caught before anything runs
 
@@ -115,6 +148,7 @@ npm run playground                       # build + serve the web playground loca
 | `luma file.luma` | run a program |
 | `luma -e '<code>'` | run a snippet and echo its value |
 | `luma check file.luma` | report problems without running the program |
+| `luma trace file.luma` | run and print the execution timeline |
 | `luma ast file.luma` | dump the syntax tree as JSON |
 | `luma tokens file.luma` | dump the token stream as JSON |
 
@@ -136,7 +170,9 @@ interpreter.run("fn fib(n) { if (n < 2) { n } else { fib(n-1) + fib(n-2) } } pri
 ```luma
 // ── Bindings ────────────────────────────────────────────────
 let name = "Luma";        // declare
-name = "Luma 1.0";        // reassign; assigning an undeclared name is an error
+name = "Luma 1.2";        // reassign; assigning an undeclared name is an error
+let n = 1;
+n += 2;  n -= 1;  n *= 3; // compound assignment: also -= *= /= %=
 
 // ── Types ───────────────────────────────────────────────────
 42  3.14  1_000_000       // number (IEEE-754 double)
@@ -144,6 +180,21 @@ name = "Luma 1.0";        // reassign; assigning an undeclared name is an error
 true  false  nil          // boolean, nil
 [1, "two", [3]]           // array — mutable, heterogeneous
 {"key": 1, 2: "two"}      // hash  — string/number/boolean keys
+
+// ── String interpolation ────────────────────────────────────
+"Hello, {name}!"          // any expression fits inside {…}
+"{len(name)} chars"       // nested quotes are fine
+"literal \{braces\}"      // escape with a backslash
+
+// ── Pattern matching ────────────────────────────────────────
+match (value) {
+  0 -> "zero",                         // literal
+  1 | 2 | 3 -> "small",                // alternatives
+  [head, ...rest] -> head,             // array, with a rest binding
+  {"type": kind} -> kind,              // hash — a subset test
+  n if n > 100 -> "big",               // guard, seeing the binding
+  _ -> "anything else"                 // wildcard
+}
 
 // ── Everything is an expression ─────────────────────────────
 let size = if (len(name) > 4) { "long" } else { "short" };
@@ -234,6 +285,7 @@ value
 | `src/builtins.ts` | ~320 | The standard library |
 | `src/errors.ts` | ~205 | Positioned diagnostics, snippet rendering, spelling hints |
 | `src/highlight.ts` | ~125 | Syntax highlighting, driven by the real lexer |
+| `src/tracer.ts` | ~140 | Execution recording for the time-travel debugger |
 
 ### Design notes
 
@@ -264,6 +316,17 @@ running the actual lexer, so it cannot drift from the parser the way a hand-writ
 editor grammar does. It is a library module with its own tests — the playground just
 renders what it returns.
 
+**Why record execution instead of stepping it?** Stepping a recursive evaluator means
+turning it inside out — generators, a continuation-passing rewrite, or a worker with
+message passing — and every one of those complicates the evaluator for the sake of a tool.
+Recording costs one null check per statement when the debugger is off, and it buys
+something stepping cannot give: moving *backwards* through the run. The trade is that the
+program must finish first, and that a hot loop hits a step budget.
+
+**Why is compound assignment a node, not sugar?** Desugaring `a[next()] += 1` into
+`a[next()] = a[next()] + 1` would call `next` twice. The evaluator resolves the target
+once and reuses it for both the read and the write.
+
 **Why zero dependencies?** The point of the project is that nothing is delegated.
 TypeScript appears only as a devDependency, for typechecking and for compiling the browser
 build; the interpreter itself runs on Node with no toolchain at all.
@@ -280,15 +343,19 @@ Best of 7 runs after 2 warm-ups, measuring parse + analyse + evaluate end to end
 
 | Benchmark | Time | What it stresses |
 | --- | ---: | --- |
-| `strings` | 5.7 ms | concatenation, `split`/`join`/`map` |
-| `collections` | 60.5 ms | a 50k-element pipeline plus hash writes |
-| `fib` | 73.4 ms | `fib(24)` — calls, scope creation, recursion |
-| `loop` | 195.8 ms | 400k iterations of read-modify-write |
+| `strings` | 5.4 ms | concatenation, `split`/`join`/`map` |
+| `collections` | 59.7 ms | a 50k-element pipeline plus hash writes |
+| `fib` | 78.2 ms | `fib(24)` — calls, scope creation, recursion |
+| `loop` | 202.2 ms | 400k iterations of read-modify-write |
 
-The suite exists to make optimisation claims checkable. It immediately earned its keep:
-variable reads used to walk the scope chain twice — once to ask whether a name existed,
-once to fetch it — which a single `lookup` returning a sentinel collapsed into one walk,
-worth **12% on `loop`** and 8% on `fib`.
+The suite exists to make optimisation claims checkable, and it has earned its keep twice:
+
+- variable reads used to walk the scope chain twice — once to ask whether a name existed,
+  once to fetch it — which a single `lookup` returning a sentinel collapsed into one walk,
+  worth **12% on `loop`**;
+- adding compound assignment quietly cost **13% on `loop`**, because the new code path read
+  the old value even for a plain `=`. The benchmark caught it in the same session; plain
+  assignment now skips that lookup again.
 
 ## Standard library
 
@@ -333,11 +400,13 @@ a committed snapshot, so nothing here can drift out of date.
 | [`07_interpreter_in_luma.luma`](examples/07_interpreter_in_luma.luma) | a recursive-descent arithmetic parser — written *in* Luma |
 | [`08_diagnostics.luma`](examples/08_diagnostics.luma) | what a runtime error looks like (fails on purpose) |
 | [`09_static_analysis.luma`](examples/09_static_analysis.luma) | everything the resolver catches before running (fails on purpose) |
+| [`10_pattern_matching.luma`](examples/10_pattern_matching.luma) | every pattern form, plus an expression evaluator built from them |
+| [`11_strings.luma`](examples/11_strings.luma) | interpolation and compound assignment, building a small report |
 
 ## Testing
 
 ```bash
-npm test          # 290 tests across every layer
+npm test          # 394 tests across every layer
 npm run typecheck # strict TypeScript, noUncheckedIndexedAccess included
 npm run build     # emits dist/ with type declarations
 ```
@@ -354,7 +423,9 @@ Two properties are worth calling out, because they catch whole classes of bug at
 - highlighting every example program and concatenating the segments must reproduce the
   file byte for byte — a highlighter that drops or duplicates source fails instantly;
 - the resolver must report *nothing* for a table of valid programs, which is what keeps
-  static analysis from becoming a nuisance.
+  static analysis from becoming a nuisance;
+- running a program with the recorder attached must produce exactly what running it
+  without one does, so the debugger observes rather than participates.
 
 ## Roadmap
 
@@ -363,6 +434,9 @@ Ideas that would each teach something new, roughly in order of interest:
 - [x] A resolver pass with static diagnostics and spelling suggestions
 - [x] Parser error recovery, so one run reports every syntax error
 - [x] A benchmark suite to keep performance claims honest
+- [x] Pattern matching, string interpolation and compound assignment
+- [x] A time-travel debugger, in the browser and on the command line
+- [ ] Breakpoints and a watch expression in the debugger
 - [ ] Turn the resolver's scope walk into slot indices, so lookups become array reads
 - [ ] A bytecode VM behind the same front-end, to compare tree-walking against a stack machine
 - [ ] Constant folding over the AST

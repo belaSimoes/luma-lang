@@ -16,6 +16,8 @@ import type {
   Identifier,
   IfExpression,
   IndexExpression,
+  MatchArm,
+  Pattern,
   Program,
   Statement,
 } from "./ast.ts";
@@ -31,8 +33,22 @@ const PREFIX = 8;
 const MAX_SYNTAX_ERRORS = 10;
 
 /** Binding power of each infix/postfix operator. */
+/** Compound assignment operators, mapped to the arithmetic they apply. */
+const COMPOUND_ASSIGNMENT: Partial<Record<TokenType, string>> = {
+  PLUS_ASSIGN: "+",
+  MINUS_ASSIGN: "-",
+  STAR_ASSIGN: "*",
+  SLASH_ASSIGN: "/",
+  PERCENT_ASSIGN: "%",
+};
+
 const PRECEDENCE: Partial<Record<TokenType, number>> = {
   ASSIGN: ASSIGNMENT,
+  PLUS_ASSIGN: ASSIGNMENT,
+  MINUS_ASSIGN: ASSIGNMENT,
+  STAR_ASSIGN: ASSIGNMENT,
+  SLASH_ASSIGN: ASSIGNMENT,
+  PERCENT_ASSIGN: ASSIGNMENT,
   OR: 2,
   AND: 3,
   EQ: 4,
@@ -57,8 +73,13 @@ export class Parser {
   private readonly tokens: Token[];
   private cursor = 0;
 
-  constructor(source: string) {
-    this.tokens = new Lexer(source).tokenize();
+  /**
+   * @param source text to parse
+   * @param origin position the text starts at in the original file, so an
+   *   interpolated expression parsed on its own still reports true positions.
+   */
+  constructor(source: string, origin?: Position) {
+    this.tokens = new Lexer(source, origin).tokenize();
   }
 
   /**
@@ -263,6 +284,8 @@ export class Parser {
       case "STRING":
         this.advance();
         return { kind: "StringLiteral", value: token.literal, position: token.position };
+      case "TEMPLATE":
+        return this.parseTemplate();
       case "TRUE":
       case "FALSE":
         this.advance();
@@ -297,6 +320,8 @@ export class Parser {
         return this.parseHashLiteral();
       case "IF":
         return this.parseIfExpression();
+      case "MATCH":
+        return this.parseMatchExpression();
       case "FN":
         return this.parseFunctionLiteral();
       default:
@@ -318,6 +343,11 @@ export class Parser {
       case "DOT":
         return this.parseMember(left);
       case "ASSIGN":
+      case "PLUS_ASSIGN":
+      case "MINUS_ASSIGN":
+      case "STAR_ASSIGN":
+      case "SLASH_ASSIGN":
+      case "PERCENT_ASSIGN":
         return this.parseAssignment(left);
       case "AND":
       case "OR": {
@@ -346,7 +376,7 @@ export class Parser {
   }
 
   private parseAssignment(left: Expression): Expression {
-    const token = this.advance(); // `=`
+    const token = this.advance(); // `=` or a compound operator
     if (left.kind !== "Identifier" && left.kind !== "IndexExpression") {
       throw new SyntaxError_(
         "invalid assignment target: expected a variable or an index expression",
@@ -359,8 +389,214 @@ export class Parser {
       kind: "AssignExpression",
       target: left as Identifier | IndexExpression,
       value,
+      operator: COMPOUND_ASSIGNMENT[token.type] ?? null,
       position: token.position,
     };
+  }
+
+  // -------------------------------------------------------------- templates
+
+  /** Turn a `TEMPLATE` token's raw pieces into an AST node. */
+  private parseTemplate(): Expression {
+    const token = this.advance();
+    const parts: Array<
+      { kind: "text"; value: string } | { kind: "expression"; value: Expression }
+    > = [];
+
+    for (const part of token.parts ?? []) {
+      if (part.kind === "text") {
+        parts.push(part);
+        continue;
+      }
+      // Re-lex the hole at its real position, so an error inside an
+      // interpolation points at the original line and column.
+      const inner = new Parser(part.source, part.position);
+      parts.push({ kind: "expression", value: inner.parseInterpolatedExpression() });
+    }
+
+    return { kind: "TemplateLiteral", parts, position: token.position };
+  }
+
+  /** Parse exactly one expression, used for the inside of an interpolation. */
+  private parseInterpolatedExpression(): Expression {
+    const expression = this.parseExpression(LOWEST);
+    if (!this.currentIs("EOF")) {
+      throw new SyntaxError_(
+        `unexpected ${describeToken(this.current())} in an interpolation: ` +
+          "each '{…}' holds a single expression",
+        this.current().position,
+      );
+    }
+    return expression;
+  }
+
+  // ------------------------------------------------------------------ match
+
+  private parseMatchExpression(): Expression {
+    const position = this.advance().position; // `match`
+    this.expect("LPAREN", "'(' after 'match'");
+    const subject = this.parseExpression(LOWEST);
+    this.expect("RPAREN", "')' after the value being matched");
+    this.expect("LBRACE", "'{' to open the match arms");
+
+    const arms: MatchArm[] = [];
+    while (!this.currentIs("RBRACE")) {
+      if (this.currentIs("EOF")) {
+        throw new SyntaxError_("unclosed match: expected '}'", position);
+      }
+      arms.push(this.parseMatchArm());
+      if (!this.currentIs("RBRACE")) {
+        this.expect("COMMA", "',' or '}' between match arms");
+      }
+    }
+    this.advance(); // `}`
+
+    if (arms.length === 0) {
+      throw new SyntaxError_("a match expression needs at least one arm", position);
+    }
+    return { kind: "MatchExpression", subject, arms, position };
+  }
+
+  private parseMatchArm(): MatchArm {
+    const pattern = this.parsePattern();
+
+    let guard: Expression | null = null;
+    if (this.currentIs("IF")) {
+      this.advance();
+      guard = this.parseExpression(LOWEST);
+    }
+
+    this.expect("ARROW", "'->' between a pattern and its result");
+
+    // A brace here is a block unless it is unambiguously a hash literal, the
+    // same rule statements use.
+    const body =
+      this.currentIs("LBRACE") && !this.looksLikeHashLiteral()
+        ? this.parseBlock()
+        : this.parseExpression(LOWEST);
+
+    return { pattern, guard, body };
+  }
+
+  /** `a | b | c` — alternatives bind loosest inside a pattern. */
+  private parsePattern(): Pattern {
+    const first = this.parsePrimaryPattern();
+    if (!this.currentIs("PIPE")) return first;
+
+    const options = [first];
+    while (this.currentIs("PIPE")) {
+      this.advance();
+      options.push(this.parsePrimaryPattern());
+    }
+
+    for (const option of options) {
+      if (bindsNames(option)) {
+        throw new SyntaxError_(
+          "alternatives in a pattern may not bind names, because only one of " +
+            "them matches and the body could not tell which",
+          option.position,
+        );
+      }
+    }
+    return { kind: "OrPattern", options, position: first.position };
+  }
+
+  private parsePrimaryPattern(): Pattern {
+    const token = this.current();
+
+    switch (token.type) {
+      case "IDENT":
+        this.advance();
+        return token.literal === "_"
+          ? { kind: "WildcardPattern", position: token.position }
+          : { kind: "BindingPattern", name: token.literal, position: token.position };
+
+      case "NUMBER":
+      case "STRING":
+      case "TRUE":
+      case "FALSE":
+      case "NIL":
+        return { kind: "LiteralPattern", value: this.parsePrefix(), position: token.position };
+
+      case "MINUS": {
+        // Negative number literals: `match (n) { -1 -> … }`.
+        this.advance();
+        const number = this.expect("NUMBER", "a number after '-' in a pattern");
+        return {
+          kind: "LiteralPattern",
+          value: {
+            kind: "NumberLiteral",
+            value: -Number(number.literal),
+            position: token.position,
+          },
+          position: token.position,
+        };
+      }
+
+      case "LBRACKET":
+        return this.parseArrayPattern();
+
+      case "LBRACE":
+        return this.parseHashPattern();
+
+      default:
+        throw new SyntaxError_(
+          `unexpected ${describeToken(token)} in a pattern`,
+          token.position,
+        );
+    }
+  }
+
+  private parseArrayPattern(): Pattern {
+    const position = this.advance().position; // `[`
+    const elements: Pattern[] = [];
+    let rest: string | null = null;
+
+    while (!this.currentIs("RBRACKET")) {
+      if (this.currentIs("EOF")) {
+        throw new SyntaxError_("unclosed array pattern: expected ']'", position);
+      }
+
+      if (this.currentIs("ELLIPSIS")) {
+        const ellipsis = this.advance();
+        rest = this.expect("IDENT", "a name after '...' in an array pattern").literal;
+        if (!this.currentIs("RBRACKET")) {
+          throw new SyntaxError_(
+            "'...rest' must be the last element of an array pattern",
+            ellipsis.position,
+          );
+        }
+        break;
+      }
+
+      elements.push(this.parsePattern());
+      if (!this.currentIs("RBRACKET")) {
+        this.expect("COMMA", "',' or ']' in the array pattern");
+      }
+    }
+    this.expect("RBRACKET", "']' to close the array pattern");
+
+    return { kind: "ArrayPattern", elements, rest, position };
+  }
+
+  private parseHashPattern(): Pattern {
+    const position = this.advance().position; // `{`
+    const entries: Array<{ key: Expression; value: Pattern }> = [];
+
+    while (!this.currentIs("RBRACE")) {
+      if (this.currentIs("EOF")) {
+        throw new SyntaxError_("unclosed hash pattern: expected '}'", position);
+      }
+      const key = this.parsePrefix();
+      this.expect("COLON", "':' between a hash-pattern key and its pattern");
+      entries.push({ key, value: this.parsePattern() });
+      if (!this.currentIs("RBRACE")) {
+        this.expect("COMMA", "',' or '}' in the hash pattern");
+      }
+    }
+    this.advance(); // `}`
+
+    return { kind: "HashPattern", entries, position };
   }
 
   private parseCall(callee: Expression): Expression {
@@ -516,6 +752,22 @@ export class Parser {
 
   private precedenceOf(type: TokenType): number {
     return PRECEDENCE[type] ?? LOWEST;
+  }
+}
+
+/** True when a pattern introduces any name into the arm's scope. */
+function bindsNames(pattern: Pattern): boolean {
+  switch (pattern.kind) {
+    case "BindingPattern":
+      return true;
+    case "ArrayPattern":
+      return pattern.rest !== null || pattern.elements.some(bindsNames);
+    case "HashPattern":
+      return pattern.entries.some((entry) => bindsNames(entry.value));
+    case "OrPattern":
+      return pattern.options.some(bindsNames);
+    default:
+      return false;
   }
 }
 

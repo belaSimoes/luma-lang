@@ -1,0 +1,50 @@
+// String interpolation and compound assignment.
+
+let name = "Luma";
+let version = 1.2;
+
+// Any expression fits inside `{…}`.
+print("Welcome to {name} {version}!");
+print("2 + 2 = {2 + 2}, and len(\"{name}\") = {len(name)}");
+print("Interpolations nest: {"inner {name}"}");
+print("Write a literal brace with \{ and \}.");
+
+// Compound assignment keeps accumulating code short.
+let total = 0;
+let line = "";
+
+for (n in range(1, 6)) {
+  total += n * n;
+  line += "{n}² ";
+}
+
+print("");
+print("{trim(line)} sum to {total}");
+
+// It works through indexes too, evaluating the target only once.
+let tally = {"hits": 0, "misses": 0};
+for (roll in [3, 7, 1, 9, 5, 2]) {
+  if (roll > 4) {
+    tally.hits += 1;
+  } else {
+    tally.misses += 1;
+  }
+}
+print("hits: {tally.hits}, misses: {tally.misses}");
+
+// A small report, built with interpolation instead of concatenation.
+let rows = [
+  {"item": "widget", "qty": 3, "price": 4.5},
+  {"item": "gizmo", "qty": 12, "price": 1.25},
+  {"item": "doohickey", "qty": 1, "price": 99.0}
+];
+
+print("");
+let grand = 0;
+for (row in rows) {
+  let subtotal = row.qty * row.price;
+  grand += subtotal;
+  print("{row.item}{" " * (12 - len(row.item))}{row.qty} x {row.price} = {subtotal}");
+}
+print("{"-" * 32}");
+print("total{" " * 22}{grand}");

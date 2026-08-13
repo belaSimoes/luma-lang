@@ -179,10 +179,22 @@
         inset: 0;
         width: 100%;
         height: 100%;
-        white-space: pre-wrap;
-        word-break: break-word;
+        /* `pre`, not `pre-wrap`: the debugger locates a line by multiplying its
+           number by the line height, which only holds if lines never wrap. */
+        white-space: pre;
         overflow: auto;
         border: 0;
+      }
+
+      /* Highlights the line the debugger is currently sitting on. */
+      .active-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        background: rgba(122, 162, 247, 0.16);
+        border-left: 2px solid var(--accent);
+        pointer-events: none;
+        display: none;
       }
 
       .editor > textarea {
@@ -217,6 +229,85 @@
       .status.ok { color: var(--accent-2); }
       .status.bad { color: var(--error); }
       .status.warn { color: #e0af68; }
+
+      /* ------------------------------------------------------------ debugger */
+
+      .debugger {
+        margin: 0 0 16px;
+        background: var(--panel);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+
+      .transport {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .transport button {
+        padding: 5px 11px;
+        font-size: 13px;
+      }
+
+      .transport input[type="range"] {
+        flex: 1;
+        min-width: 120px;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+
+      .transport .counter {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--muted);
+        white-space: nowrap;
+        min-width: 11ch;
+        text-align: right;
+      }
+
+      #closeDebugger { padding: 5px 10px; }
+
+      .debug-panes {
+        display: grid;
+        grid-template-columns: 1.3fr 1fr 1fr;
+        gap: 1px;
+        background: var(--border);
+      }
+
+      @media (max-width: 860px) {
+        .debug-panes { grid-template-columns: 1fr; }
+      }
+
+      .debug-pane {
+        background: var(--panel);
+        min-height: 108px;
+      }
+
+      .debug-pane h3 {
+        margin: 0;
+        padding: 8px 14px 0;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .debug-pane pre {
+        padding: 6px 14px 14px;
+        max-height: 168px;
+        white-space: pre-wrap;
+        font-size: 12.5px;
+      }
+
+      .debug-pane .name { color: var(--accent); }
+      .debug-pane .frame { color: #bb9af7; }
+      .debug-pane .kind { color: var(--accent-2); }
 
       pre .err { color: var(--error); }
       pre .warn { color: #e0af68; }
@@ -259,12 +350,44 @@
 
       <div class="toolbar">
         <button class="primary" id="run">Run &nbsp;<span class="meta">Ctrl+Enter</span></button>
+        <button id="debug">Debug</button>
         <select id="examples" aria-label="Load an example"></select>
         <button id="check">Check</button>
         <button id="tokens">Tokens</button>
         <button id="ast">AST</button>
         <span class="hint">Everything below executes locally — nothing is sent anywhere.</span>
       </div>
+
+      <!--
+        The time-travel debugger. The program is recorded end to end, then this
+        bar scrubs through the timeline; stepping backwards is just moving the
+        index down, which a live stepping debugger cannot do.
+      -->
+      <section class="debugger" id="debugger" hidden>
+        <div class="transport">
+          <button id="stepStart" title="First step">⏮</button>
+          <button id="stepBack" title="Step back">◀</button>
+          <button id="stepForward" title="Step forward">▶</button>
+          <button id="stepEnd" title="Last step">⏭</button>
+          <input type="range" id="timeline" min="0" value="0" aria-label="Execution timeline" />
+          <span class="counter" id="stepCounter"></span>
+          <button id="closeDebugger" title="Close the debugger">✕</button>
+        </div>
+        <div class="debug-panes">
+          <div class="debug-pane">
+            <h3>Now</h3>
+            <pre id="debugNow"></pre>
+          </div>
+          <div class="debug-pane">
+            <h3>Variables</h3>
+            <pre id="debugVars"></pre>
+          </div>
+          <div class="debug-pane">
+            <h3>Call stack</h3>
+            <pre id="debugStack"></pre>
+          </div>
+        </div>
+      </section>
 
       <div class="grid">
         <section class="pane">
@@ -276,6 +399,7 @@
           -->
           <div class="editor">
             <pre class="highlight" id="highlight" aria-hidden="true"></pre>
+            <div class="active-line" id="activeLine"></div>
             <textarea
               id="source"
               spellcheck="false"
@@ -301,6 +425,7 @@
       import {
         run,
         check,
+        trace,
         tokenize,
         parse,
         inspect,
@@ -382,6 +507,50 @@ fn describe(shape) {
 }
 
 describe({"width": 5, "height": 5})`,
+
+        "Pattern matching": `fn describe(value) {
+  match (value) {
+    0 -> "zero",
+    1 | 2 | 3 -> "small",
+    [] -> "an empty list",
+    [only] -> "one item: {only}",
+    [first, ...rest] -> "starts with {first}, then {len(rest)} more",
+    {"type": "circle", "radius": r} -> "a circle of area {round(3.14159 * r * r)}",
+    {"type": kind} -> "a shape of type {kind}",
+    n if type(n) == "string" -> "the string \\"{n}\\"",
+    _ -> "something else"
+  }
+}
+
+let values = [0, 2, [], [42], [1, 2, 3],
+  {"type": "circle", "radius": 3}, {"type": "square"}, "hi", true];
+
+each(values, fn(v) { print(describe(v)) })`,
+
+        "Debug me (press Debug)": `// Press Debug, then scrub the timeline or use the
+// arrow keys. You can step backwards — the whole run
+// is recorded, not paused.
+fn collatz(n) {
+  let steps = 0;
+  while (n != 1) {
+    n = if (n % 2 == 0) { n / 2 } else { 3 * n + 1 };
+    steps += 1;
+  }
+  steps
+}
+
+let longest = 0;
+let winner = 0;
+
+for (candidate in range(1, 12)) {
+  let length = collatz(candidate);
+  if (length > longest) {
+    longest = length;
+    winner = candidate;
+  }
+}
+
+print("{winner} takes {longest} steps")`,
 
         "Static analysis": `// None of this runs: the resolver rejects the program first,
 // and reports every problem in one pass. Press Check too.
@@ -481,6 +650,122 @@ total = area();`,
         );
       }
 
+      // -------------------------------------------------------------- debugger
+
+      const debuggerEl = document.getElementById("debugger");
+      const timelineEl = document.getElementById("timeline");
+      const counterEl = document.getElementById("stepCounter");
+      const activeLineEl = document.getElementById("activeLine");
+      const nowEl = document.getElementById("debugNow");
+      const varsEl = document.getElementById("debugVars");
+      const stackEl = document.getElementById("debugStack");
+
+      let timeline = [];
+      let cursor = 0;
+
+      function startDebugging() {
+        const result = trace(sourceEl.value);
+        timeline = result.steps;
+
+        if (timeline.length === 0) {
+          // Nothing ran: either the program is empty or it failed to analyse.
+          stopDebugging();
+          render(
+            result.ok
+              ? [["meta", "nothing to step through"]]
+              : [["err", result.error]],
+          );
+          return;
+        }
+
+        debuggerEl.hidden = false;
+        timelineEl.max = String(timeline.length - 1);
+        cursor = 0;
+        showStep(0);
+
+        const parts = result.output.map((line) => ["", line]);
+        if (result.truncated) {
+          parts.push(["warn", "recording stopped at the step limit"]);
+        }
+        if (!result.ok) parts.push(["err", result.error]);
+        render(parts);
+      }
+
+      function stopDebugging() {
+        debuggerEl.hidden = true;
+        activeLineEl.style.display = "none";
+        timeline = [];
+      }
+
+      function showStep(index) {
+        cursor = Math.max(0, Math.min(index, timeline.length - 1));
+        const step = timeline[cursor];
+        if (step === undefined) return;
+
+        timelineEl.value = String(cursor);
+        counterEl.textContent = `${cursor + 1} / ${timeline.length}`;
+
+        const kind =
+          step.kind === "call" ? "call →" : step.kind === "return" ? "return ←" : "line";
+        nowEl.innerHTML =
+          `<span class="kind">${escapeHtml(kind)}</span> ` +
+          `<span class="meta">${step.line}:${step.column}</span>\n${escapeHtml(step.label)}`;
+
+        // Innermost scope first, which is the one being executed.
+        varsEl.innerHTML =
+          step.scopes
+            .flatMap((scope) => scope.variables)
+            .map(([name, value]) => `<span class="name">${escapeHtml(name)}</span> = ${escapeHtml(value)}`)
+            .join("\n") || '<span class="meta">(nothing in scope)</span>';
+
+        stackEl.innerHTML =
+          step.stack.map((frame) => `<span class="frame">${escapeHtml(frame)}</span>`).join("\n") ||
+          '<span class="meta">(top level)</span>';
+
+        highlightLine(step.line);
+      }
+
+      /**
+       * Position the line marker. Lines never wrap in the editor, so a line's
+       * offset is simply its index times the computed line height.
+       */
+      function highlightLine(line) {
+        const styles = getComputedStyle(sourceEl);
+        const lineHeight = parseFloat(styles.lineHeight);
+        const paddingTop = parseFloat(styles.paddingTop);
+        if (!Number.isFinite(lineHeight)) return;
+
+        const top = paddingTop + (line - 1) * lineHeight;
+        activeLineEl.style.display = "block";
+        activeLineEl.style.height = `${lineHeight}px`;
+        activeLineEl.style.top = `${top - sourceEl.scrollTop}px`;
+
+        // Keep the marker on screen as the timeline moves through the program.
+        const view = sourceEl.clientHeight;
+        if (top < sourceEl.scrollTop || top > sourceEl.scrollTop + view - lineHeight) {
+          sourceEl.scrollTop = Math.max(0, top - view / 2);
+          syncHighlight();
+          activeLineEl.style.top = `${top - sourceEl.scrollTop}px`;
+        }
+      }
+
+      document.getElementById("debug").addEventListener("click", startDebugging);
+      document.getElementById("closeDebugger").addEventListener("click", stopDebugging);
+      document.getElementById("stepStart").addEventListener("click", () => showStep(0));
+      document.getElementById("stepBack").addEventListener("click", () => showStep(cursor - 1));
+      document.getElementById("stepForward").addEventListener("click", () => showStep(cursor + 1));
+      document
+        .getElementById("stepEnd")
+        .addEventListener("click", () => showStep(timeline.length - 1));
+      timelineEl.addEventListener("input", () => showStep(Number(timelineEl.value)));
+
+      document.addEventListener("keydown", (event) => {
+        if (debuggerEl.hidden || event.target === sourceEl) return;
+        if (event.key === "ArrowLeft") showStep(cursor - 1);
+        if (event.key === "ArrowRight") showStep(cursor + 1);
+        if (event.key === "Escape") stopDebugging();
+      });
+
       function dump(kind) {
         try {
           const data = kind === "ast" ? parse(sourceEl.value) : tokenize(sourceEl.value);
@@ -505,6 +790,8 @@ total = area();`,
       let statusTimer = 0;
       sourceEl.addEventListener("input", () => {
         syncHighlight();
+        // A recorded timeline describes the old text, so editing invalidates it.
+        stopDebugging();
         // Analysis is fast, but debouncing keeps typing perfectly smooth on a
         // large program and avoids flashing errors mid-word.
         clearTimeout(statusTimer);
@@ -514,6 +801,10 @@ total = area();`,
       sourceEl.addEventListener("scroll", () => {
         highlightEl.scrollTop = sourceEl.scrollTop;
         highlightEl.scrollLeft = sourceEl.scrollLeft;
+        if (!debuggerEl.hidden) {
+          const step = timeline[cursor];
+          if (step !== undefined) highlightLine(step.line);
+        }
       });
 
       sourceEl.addEventListener("keydown", (event) => {
@@ -533,6 +824,7 @@ total = area();`,
 
       function load(source) {
         sourceEl.value = source;
+        stopDebugging();
         syncHighlight();
         refreshStatus();
       }

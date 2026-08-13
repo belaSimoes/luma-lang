@@ -22,6 +22,7 @@
 import type {
   BlockStatement,
   Expression,
+  Pattern,
   Program,
   Statement,
 } from "./ast.ts";
@@ -271,6 +272,29 @@ class Resolver {
         }
         return;
 
+      case "TemplateLiteral":
+        for (const part of node.parts) {
+          if (part.kind === "expression") this.walkExpression(part.value);
+        }
+        return;
+
+      case "MatchExpression":
+        this.walkExpression(node.subject);
+        for (const arm of node.arms) {
+          // Each arm gets its own scope holding the names its pattern binds;
+          // the guard can see them too, which is the point of a guard.
+          this.push();
+          for (const name of patternBindings(arm.pattern)) this.declareName(name);
+          if (arm.guard !== null) this.walkExpression(arm.guard);
+          if (arm.body.kind === "BlockStatement") {
+            this.walkStatements(arm.body.body);
+          } else {
+            this.walkExpression(arm.body);
+          }
+          this.pop();
+        }
+        return;
+
       case "CallExpression":
         this.walkExpression(node.callee);
         for (const argument of node.args) this.walkExpression(argument);
@@ -335,6 +359,25 @@ class Resolver {
         severity: options.severity ?? "error",
       }),
     );
+  }
+}
+
+/** Every name a pattern introduces, in source order. */
+export function patternBindings(pattern: Pattern): string[] {
+  switch (pattern.kind) {
+    case "BindingPattern":
+      return [pattern.name];
+    case "ArrayPattern": {
+      const names = pattern.elements.flatMap(patternBindings);
+      return pattern.rest === null ? names : [...names, pattern.rest];
+    }
+    case "HashPattern":
+      return pattern.entries.flatMap((entry) => patternBindings(entry.value));
+    case "OrPattern":
+      // The parser rejects binding alternatives, so this is always empty.
+      return pattern.options.flatMap(patternBindings);
+    default:
+      return [];
   }
 }
 

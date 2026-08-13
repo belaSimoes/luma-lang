@@ -60,15 +60,37 @@ Strings are delimited by `"` or `'` and may not span lines. Supported escapes:
 | `\0` | NUL |
 | `\"` `\'` | quote |
 | `\\` | backslash |
+| `\{` `\}` | literal brace, i.e. not an interpolation |
 
 Any other escape is a syntax error.
 
-### 1.6 Operators and punctuation
+### 1.6 String interpolation
+
+`{` inside a string opens an interpolation holding exactly one expression:
+
+```luma
+let name = "Luma";
+print("Hello, {name}! That is {len(name)} characters.");
+print("Nested quotes are fine: {upper("shout")}");
+print("A literal brace: \{");
+```
+
+The expression is inserted the way `print` renders it — strings appear without
+quotes. A string with no interpolation is an ordinary string literal; the
+distinction is invisible except in the token stream.
+
+Positions inside a hole are absolute, so a diagnostic points at the real column
+of the original file rather than at the start of the string.
+
+### 1.7 Operators and punctuation
 
 ```
-=  +  -  !  *  /  %  <  >  <=  >=  ==  !=  &&  ||
-,  ;  :  .  (  )  {  }  [  ]
+=  +=  -=  *=  /=  %=
++  -  !  *  /  %  <  >  <=  >=  ==  !=  &&  ||
+,  ;  :  .  |  ->  ...  (  )  {  }  [  ]
 ```
+
+A UTF-8 byte-order mark at the start of a file is ignored.
 
 ---
 
@@ -102,7 +124,8 @@ exprStmt    = expression [ ";" ] ;
 params      = "(" [ identifier { "," identifier } ] ")" ;
 
 expression  = assignment ;
-assignment  = ( identifier | index ) "=" assignment | logicalOr ;
+assignment  = ( identifier | index ) assignOp assignment | logicalOr ;
+assignOp    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
 logicalOr   = logicalAnd { "||" logicalAnd } ;
 logicalAnd  = equality { "&&" equality } ;
 equality    = comparison { ( "==" | "!=" ) comparison } ;
@@ -117,13 +140,25 @@ index       = "[" expression "]" ;
 member      = "." identifier ;
 
 primary     = number | string | "true" | "false" | "nil" | identifier
-            | array | hash | fnLiteral | ifExpr | "(" expression ")" ;
+            | array | hash | fnLiteral | ifExpr | matchExpr | "(" expression ")" ;
 
 array       = "[" [ expression { "," expression } ] "]" ;
 hash        = "{" [ pair { "," pair } ] "}" ;
 pair        = expression ":" expression ;
 fnLiteral   = "fn" [ identifier ] params block ;
 ifExpr      = "if" "(" expression ")" block [ "else" ( ifExpr | block ) ] ;
+
+matchExpr   = "match" "(" expression ")" "{" arm { "," arm } [ "," ] "}" ;
+arm         = pattern [ "if" expression ] "->" ( expression | block ) ;
+
+pattern     = primaryPat { "|" primaryPat } ;
+primaryPat  = "_"
+            | identifier                          (* binds *)
+            | [ "-" ] number | string | "true" | "false" | "nil"
+            | "[" [ patElem { "," patElem } ] "]"
+            | "{" [ patPair { "," patPair } ] "}" ;
+patElem     = pattern | "..." identifier ;
+patPair     = literalKey ":" pattern ;
 ```
 
 ### 2.1 Precedence
@@ -242,6 +277,54 @@ end of an array *is* an error.
 Assignment is an expression that evaluates to the assigned value. `x = 1`
 requires `x` to already exist; use `let` to introduce it. This makes typos
 in variable names an error instead of a silent new global.
+
+The compound forms `+= -= *= /= %=` apply the matching operator, inheriting its
+overloads — `s += "!"` concatenates, `a += [1]` appends. The target is evaluated
+**once**, so `items[next()] += 1` calls `next` a single time. Applying a compound
+operator to a hash key that does not exist is an error rather than an implicit
+`nil`.
+
+### 4.8 `match`
+
+`match` tries each arm in source order and evaluates the first whose pattern
+matches and whose guard passes:
+
+```luma
+match (value) {
+  0 -> "zero",
+  1 | 2 | 3 -> "small",
+  [] -> "empty",
+  [only] -> "one item: {only}",
+  [head, ...rest] -> "{head} and {len(rest)} more",
+  {"type": "circle", "radius": r} -> 3.14159 * r * r,
+  n if n > 100 -> "big",
+  _ -> "anything else"
+}
+```
+
+| Pattern | Matches |
+| --- | --- |
+| `_` | anything, binding nothing |
+| `name` | anything, binding it to `name` |
+| `1`, `-2`, `"s"`, `true`, `nil` | a value structurally equal to the literal |
+| `[a, b]` | an array of exactly that length, matching element-wise |
+| `[a, ...rest]` | an array of at least that length; `rest` takes the remainder |
+| `{"k": p}` | a hash **containing** key `k`, whose value matches `p` |
+| `p \| q` | either alternative |
+
+Notes that follow from the table:
+
+- Hash patterns are a subset test: extra keys are ignored, but a listed key must
+  be *present* — `{"a": nil}` matches `{"a": nil}` and not `{}`.
+- Alternatives may not bind names. Only one of them matches, so the body could
+  not tell which binding it got; the parser rejects `a | b` outright.
+- Bindings are scoped to their arm, and are visible to that arm's guard.
+- A guard is ordinary code: if it raises an error, the error propagates — it does
+  not count as "did not match".
+- If no arm matches, the program fails with `no match arm matched <value>`. There
+  is no exhaustiveness checking; `_` is how you make a match total.
+
+An arm's body is an expression, or a block when it needs several statements.
 
 ---
 
@@ -368,7 +451,29 @@ Both are configurable through the `Interpreter` options.
 
 ---
 
-## 8. Standard library
+## 8. Debugging
+
+`luma trace <file>` runs a program while recording an execution timeline, and
+the playground's **Debug** button scrubs that timeline interactively — in both
+directions.
+
+Each recorded step holds the position about to execute, a label (the source
+line, `fib(3)`, or `=> 2`), the call stack innermost-first, and the scope chain
+with every value rendered at capture time. Because values are stringified when
+captured, stepping back shows what a mutable array *held then*, not what it
+holds now.
+
+Two consequences worth knowing:
+
+- The program runs to completion before you can scrub it, so a trace of a
+  failing program ends at the failure — which is usually where you want to start
+  stepping backwards from.
+- Recording stops after 20,000 steps by default (`--maxSteps` equivalent in the
+  API) so a hot loop cannot exhaust memory. The result reports `truncated`.
+
+---
+
+## 9. Standard library
 
 See the [builtin reference in the README](../README.md#standard-library).
 

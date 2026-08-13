@@ -12,6 +12,8 @@ export type TokenType =
   | "IDENT"
   | "NUMBER"
   | "STRING"
+  // Literals with structure
+  | "TEMPLATE"
   // Operators
   | "ASSIGN"
   | "PLUS"
@@ -20,6 +22,12 @@ export type TokenType =
   | "STAR"
   | "SLASH"
   | "PERCENT"
+  // Compound assignment
+  | "PLUS_ASSIGN"
+  | "MINUS_ASSIGN"
+  | "STAR_ASSIGN"
+  | "SLASH_ASSIGN"
+  | "PERCENT_ASSIGN"
   | "LT"
   | "GT"
   | "LTE"
@@ -33,6 +41,9 @@ export type TokenType =
   | "SEMICOLON"
   | "COLON"
   | "DOT"
+  | "ARROW"
+  | "PIPE"
+  | "ELLIPSIS"
   | "LPAREN"
   | "RPAREN"
   | "LBRACE"
@@ -52,7 +63,19 @@ export type TokenType =
   | "IN"
   | "BREAK"
   | "CONTINUE"
+  | "MATCH"
   | "NIL";
+
+/**
+ * One piece of an interpolated string.
+ *
+ * The lexer records embedded expressions as raw source plus the position they
+ * started at, so the parser can re-lex them with absolute positions intact —
+ * an error inside `"total: {1 / 0}"` points at the real column.
+ */
+export type TemplatePart =
+  | { kind: "text"; value: string }
+  | { kind: "expression"; source: string; position: Position };
 
 export interface Position {
   /** 1-based line number. */
@@ -76,6 +99,8 @@ export interface Token {
    * editor spans) need both ends.
    */
   end: Position;
+  /** Present only on `TEMPLATE` tokens: the literal and expression pieces. */
+  parts?: TemplatePart[];
 }
 
 export const KEYWORDS: Record<string, TokenType> = {
@@ -91,6 +116,7 @@ export const KEYWORDS: Record<string, TokenType> = {
   in: "IN",
   break: "BREAK",
   continue: "CONTINUE",
+  match: "MATCH",
   nil: "NIL",
 };
 

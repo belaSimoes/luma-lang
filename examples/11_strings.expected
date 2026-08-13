@@ -1,0 +1,13 @@
+Welcome to Luma 1.2!
+2 + 2 = 4, and len("Luma") = 4
+Interpolations nest: inner Luma
+Write a literal brace with { and }.
+
+1² 2² 3² 4² 5² sum to 55
+hits: 3, misses: 3
+
+widget      3 x 4.5 = 13.5
+gizmo       12 x 1.25 = 15
+doohickey   1 x 99 = 99
+--------------------------------
+total                      127.5

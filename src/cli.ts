@@ -19,9 +19,13 @@ import { parse } from "./parser.ts";
 import { tokenize } from "./lexer.ts";
 import { startRepl } from "./repl.ts";
 import { inspect } from "./values.ts";
-import { check } from "./index.ts";
+import { check, trace } from "./index.ts";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
+
+const ESC = String.fromCharCode(27);
+const DIM = process.stdout.isTTY === true ? `${ESC}[2m` : "";
+const RESET_ANSI = process.stdout.isTTY === true ? `${ESC}[0m` : "";
 
 const USAGE = `luma ${VERSION} — the Luma programming language
 
@@ -30,6 +34,7 @@ Usage:
   luma <file.luma>           run a program
   luma -e, --eval <code>     run a snippet
   luma check <file.luma>     report problems without running the program
+  luma trace <file.luma>     run and print the execution timeline
   luma ast <file.luma>       print the syntax tree as JSON
   luma tokens <file.luma>    print the token stream
   luma -h, --help            show this message
@@ -65,6 +70,17 @@ function main(argv: string[]): number {
         return 2;
       }
       return execute(code, "<eval>", { echo: true });
+    }
+
+    case "trace": {
+      const file = rest[0];
+      if (file === undefined) {
+        process.stderr.write("error: 'trace' requires a file\n");
+        return 2;
+      }
+      const source = read(file);
+      if (source === null) return 66;
+      return printTrace(source, basename(file));
     }
 
     case "check": {
@@ -143,6 +159,45 @@ function execute(source: string, file: string, options: { echo: boolean }): numb
       process.stderr.write(`${render(interpreter.warnings, source, file)}\n`);
     }
   }
+}
+
+/**
+ * Print a recorded execution timeline: one line per step, indented by call
+ * depth, with the variables that changed since the previous step.
+ */
+function printTrace(source: string, file: string): number {
+  const result = trace(source, { file, stdout: () => {} });
+
+  let previous = new Map<string, string>();
+  for (const step of result.steps) {
+    const flat = new Map(step.scopes.flatMap((scope) => scope.variables));
+    const changed = [...flat]
+      .filter(([name, value]) => previous.get(name) !== value)
+      .map(([name, value]) => `${name} = ${value}`);
+    previous = flat;
+
+    const marker = step.kind === "call" ? "→" : step.kind === "return" ? "←" : " ";
+    const indent = "  ".repeat(step.stack.length);
+    const where = `${String(step.line).padStart(4)}`;
+
+    process.stdout.write(
+      `${where} ${marker} ${indent}${step.label}` +
+        (changed.length > 0 ? `   ${DIM}[${changed.join(", ")}]${RESET_ANSI}` : "") +
+        "\n",
+    );
+  }
+
+  if (result.truncated) {
+    process.stdout.write("… recording stopped at the step limit\n");
+  }
+  for (const line of result.output) {
+    process.stdout.write(`stdout: ${line}\n`);
+  }
+  if (!result.ok) {
+    process.stderr.write(`${result.error}\n`);
+    return 1;
+  }
+  return 0;
 }
 
 function render(

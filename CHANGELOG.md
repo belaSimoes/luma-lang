@@ -4,6 +4,60 @@ All notable changes to Luma are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [1.2.0]
+
+Three language features, and a debugger you can run backwards.
+
+### Added
+
+- **Pattern matching.** `match` tries arms in source order, destructuring as it
+  goes: literals, bindings, `_`, array patterns with `...rest`, hash patterns
+  (a subset test), alternatives with `|`, and `if` guards that see the bindings.
+  An arm's body is an expression or a block. No exhaustiveness checking — `_` is
+  how a match is made total — and an unmatched value fails with
+  `no match arm matched <value>`.
+
+  Alternatives may not bind names: only one of them matches, so the body could
+  not tell which binding it got. The parser rejects `a | b` with that reason.
+
+- **String interpolation.** `"Hello, {name}! ({len(name)} chars)"`. Any single
+  expression fits in a hole, nested quotes included; `\{` and `\}` are literal
+  braces. The lexer captures each hole as raw source plus its absolute position
+  and the parser re-lexes it there, so a diagnostic inside an interpolation
+  points at the real column rather than at the start of the string.
+
+- **Compound assignment** — `+= -= *= /= %=`, inheriting the overloads of the
+  operator they apply, so `s += "!"` concatenates and `a += [1]` appends. Kept
+  as an AST node rather than desugared to `a = a + b`, so the target is
+  evaluated once: `items[next()] += 1` calls `next` a single time. Applying one
+  to a hash key that does not exist is an error rather than an implicit `nil`.
+
+- **A time-travel debugger.** The interpreter can attach a `TraceRecorder` that
+  captures, at every statement and call boundary, the position, the call stack
+  and the whole scope chain. Values are stringified as they are captured, so
+  stepping back shows what a mutable value *was*.
+  - `luma trace <file>` prints the timeline, indented by call depth, with the
+    variables that changed at each step.
+  - The playground gained a **Debug** button: a scrubbable timeline, step
+    controls, arrow-key navigation, a current-line marker, and panes for the
+    variables in scope and the call stack.
+  - `trace(source)` exposes the same thing programmatically.
+
+  Recording, rather than pausing, is what makes stepping *backwards* possible —
+  and it costs one null check per statement when the debugger is off.
+
+- `Environment.chain()` exposes the scope chain for debuggers and tooling.
+
+### Fixed
+
+- A UTF-8 byte-order mark at the start of a file is now skipped instead of
+  failing to lex. Editors on Windows write one by default.
+
+### Changed
+
+- The playground editor no longer wraps long lines, so the debugger can locate a
+  line by its number.
+
 ## [1.1.0]
 
 The theme of this release: **find mistakes earlier, report all of them at once,

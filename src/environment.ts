@@ -84,6 +84,22 @@ export class Environment {
     return false;
   }
 
+  /**
+   * The scope chain, innermost first, as name/value pairs.
+   *
+   * Exposed for the debugger and the REPL. `skip` drops names that would only
+   * be noise — the 42 builtins sitting in the global scope, typically.
+   */
+  chain(skip: ReadonlySet<string> = new Set()): Array<Array<[string, LumaValue]>> {
+    const frames: Array<Array<[string, LumaValue]>> = [];
+    let scope: Environment | null = this;
+    while (scope !== null) {
+      frames.push([...scope.store].filter(([name]) => !skip.has(name)));
+      scope = scope.parent;
+    }
+    return frames;
+  }
+
   /** Names visible from this scope — used by the REPL for tab completion. */
   names(): string[] {
     const seen = new Set<string>();

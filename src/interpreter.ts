@@ -12,10 +12,12 @@
  */
 
 import type {
+  AssignExpression,
   BlockStatement,
   Expression,
   IfExpression,
-  IndexExpression,
+  MatchExpression,
+  Pattern,
   Program,
   Statement,
 } from "./ast.ts";
@@ -24,6 +26,7 @@ import { Environment, UNBOUND } from "./environment.ts";
 import { parse } from "./parser.ts";
 import { resolve } from "./resolver.ts";
 import { createBuiltins } from "./builtins.ts";
+import type { TraceRecorder } from "./tracer.ts";
 import type { Position } from "./token.ts";
 import {
   LumaBuiltin,
@@ -33,6 +36,7 @@ import {
   type HashKey,
   type LumaValue,
   formatNumber,
+  inspect,
   isTruthy,
   stringify,
   typeOf,
@@ -55,6 +59,11 @@ export interface InterpreterOptions {
   maxCallDepth?: number;
   /** Upper bound on loop iterations, guarding against accidental infinite loops. */
   maxIterations?: number;
+  /**
+   * Attach a recorder to capture an execution timeline for the debugger.
+   * When absent, the hooks compile down to a null check per statement.
+   */
+  recorder?: TraceRecorder;
 }
 
 const DEFAULT_MAX_CALL_DEPTH = 2_000;
@@ -70,11 +79,14 @@ export class Interpreter {
   private here: Position = { line: 1, column: 1 };
   /** Non-fatal diagnostics from the last {@link run}, e.g. unreachable code. */
   warnings: LumaError[] = [];
+  /** Execution recorder, or null when not debugging. */
+  private readonly recorder: TraceRecorder | null;
 
   constructor(options: InterpreterOptions = {}) {
     this.stdout = options.stdout ?? ((line) => console.log(line));
     this.maxCallDepth = options.maxCallDepth ?? DEFAULT_MAX_CALL_DEPTH;
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    this.recorder = options.recorder ?? null;
 
     this.globals = new Environment();
     for (const [name, builtin] of createBuiltins()) {
@@ -139,6 +151,9 @@ export class Interpreter {
 
   private evalStatement(node: Statement, env: Environment): LumaValue {
     this.here = node.position;
+    if (this.recorder !== null) {
+      this.recorder.statement(node.position, this.frames, env);
+    }
 
     switch (node.kind) {
       case "LetStatement": {
@@ -290,6 +305,18 @@ export class Interpreter {
       case "IfExpression":
         return this.evalIf(node, env);
 
+      case "TemplateLiteral": {
+        let out = "";
+        for (const part of node.parts) {
+          out +=
+            part.kind === "text" ? part.value : stringify(this.evalExpression(part.value, env));
+        }
+        return out;
+      }
+
+      case "MatchExpression":
+        return this.evalMatch(node, env);
+
       case "IndexExpression": {
         const target = this.evalExpression(node.target, env);
         const index = this.evalExpression(node.index, env);
@@ -297,12 +324,97 @@ export class Interpreter {
       }
 
       case "AssignExpression":
-        return this.evalAssign(node.target, this.evalExpression(node.value, env), env);
+        return this.evalAssign(node, env);
 
       case "CallExpression": {
         const callee = this.evalExpression(node.callee, env);
         const args = node.args.map((arg) => this.evalExpression(arg, env));
         return this.call(callee, args, node.position, describeCallee(node.callee));
+      }
+    }
+  }
+
+  /**
+   * Try each arm in source order: match the pattern, then check the guard.
+   * The first arm that passes both wins, with its bindings in scope.
+   */
+  private evalMatch(node: MatchExpression, env: Environment): LumaValue {
+    const subject = this.evalExpression(node.subject, env);
+
+    for (const arm of node.arms) {
+      const bindings = new Map<string, LumaValue>();
+      if (!this.matches(arm.pattern, subject, bindings)) continue;
+
+      const scope = env.child();
+      for (const [name, value] of bindings) scope.define(name, value);
+
+      if (arm.guard !== null && !isTruthy(this.evalExpression(arm.guard, scope))) {
+        continue;
+      }
+
+      return arm.body.kind === "BlockStatement"
+        ? this.evalBlock(arm.body, scope)
+        : this.evalExpression(arm.body, scope);
+    }
+
+    this.fail(`no match arm matched ${inspect(subject)}`, node.position);
+  }
+
+  /**
+   * Test a pattern against a value, collecting bindings as it goes.
+   *
+   * Bindings are written into `bindings` even on a partial match; a failed arm
+   * simply discards the map, which keeps the matcher a plain recursive
+   * predicate with no undo bookkeeping.
+   */
+  private matches(
+    pattern: Pattern,
+    value: LumaValue,
+    bindings: Map<string, LumaValue>,
+  ): boolean {
+    switch (pattern.kind) {
+      case "WildcardPattern":
+        return true;
+
+      case "BindingPattern":
+        bindings.set(pattern.name, value);
+        return true;
+
+      case "LiteralPattern":
+        // Literal patterns contain only literals, so this cannot run user code.
+        return valuesEqual(this.evalExpression(pattern.value, this.globals), value);
+
+      case "OrPattern":
+        return pattern.options.some((option) => this.matches(option, value, bindings));
+
+      case "ArrayPattern": {
+        if (!Array.isArray(value)) return false;
+
+        const fixed = pattern.elements.length;
+        if (pattern.rest === null ? value.length !== fixed : value.length < fixed) {
+          return false;
+        }
+        for (const [index, element] of pattern.elements.entries()) {
+          if (!this.matches(element, value[index]!, bindings)) return false;
+        }
+        if (pattern.rest !== null) bindings.set(pattern.rest, value.slice(fixed));
+        return true;
+      }
+
+      case "HashPattern": {
+        if (!(value instanceof LumaHash)) return false;
+
+        for (const entry of pattern.entries) {
+          const key = this.asHashKey(
+            this.evalExpression(entry.key, this.globals),
+            entry.key.position,
+          );
+          // A hash pattern is a subset test: extra keys in the value are fine,
+          // but a listed key must be present, not merely nil.
+          if (!value.entries.has(key)) return false;
+          if (!this.matches(entry.value, value.entries.get(key)!, bindings)) return false;
+        }
+        return true;
       }
     }
   }
@@ -436,19 +548,32 @@ export class Interpreter {
     this.fail(`cannot index into ${typeOf(target)}`, position);
   }
 
-  private evalAssign(
-    target: IndexExpression | { kind: "Identifier"; name: string; position: Position },
-    value: LumaValue,
-    env: Environment,
-  ): LumaValue {
+  /**
+   * Evaluate an assignment, plain or compound.
+   *
+   * For `a[i] += 1` the container and index are evaluated **once** and reused
+   * for both the read and the write, so side effects in the target — say
+   * `items[next()] += 1` — happen exactly once.
+   */
+  private evalAssign(node: AssignExpression, env: Environment): LumaValue {
+    const { target, operator } = node;
+
     if (target.kind === "Identifier") {
-      if (!env.assign(target.name, this.named(value, target.name))) {
-        this.fail(
-          `cannot assign to undeclared variable '${target.name}' — use 'let ${target.name} = ...'`,
-          target.position,
-          target.name.length,
-        );
+      // A plain `=` never reads the old value, so it must not pay for the extra
+      // scope-chain walk that a compound operator needs.
+      if (operator === null) {
+        const value = this.evalExpression(node.value, env);
+        if (!env.assign(target.name, this.named(value, target.name))) {
+          this.failUndeclared(target.name, target.position);
+        }
+        return value;
       }
+
+      const current = env.lookup(target.name);
+      if (current === UNBOUND) this.failUndeclared(target.name, target.position);
+
+      const value = this.combine(operator, current, node, env);
+      env.assign(target.name, this.named(value, target.name));
       return value;
     }
 
@@ -466,16 +591,46 @@ export class Interpreter {
           target.position,
         );
       }
+      const value = this.combine(operator, container[resolved]!, node, env);
       container[resolved] = value;
       return value;
     }
 
     if (container instanceof LumaHash) {
-      container.entries.set(this.asHashKey(index, target.position), value);
+      const key = this.asHashKey(index, target.position);
+      if (operator !== null && !container.entries.has(key)) {
+        this.fail(
+          `cannot apply '${operator}=' to a key that is not in the hash`,
+          target.position,
+        );
+      }
+      const value = this.combine(operator, container.entries.get(key) ?? null, node, env);
+      container.entries.set(key, value);
       return value;
     }
 
     this.fail(`cannot assign into ${typeOf(container)}`, target.position);
+  }
+
+  private failUndeclared(name: string, position: Position): never {
+    this.fail(
+      `cannot assign to undeclared variable '${name}' — use 'let ${name} = ...'`,
+      position,
+      name.length,
+    );
+  }
+
+  /** The value an assignment stores: the right-hand side, or `current op rhs`. */
+  private combine(
+    operator: string | null,
+    current: LumaValue,
+    node: AssignExpression,
+    env: Environment,
+  ): LumaValue {
+    const right = this.evalExpression(node.value, env);
+    return operator === null
+      ? right
+      : this.evalInfix(operator, current, right, node.position);
   }
 
   // -------------------------------------------------------------------- calls
@@ -516,11 +671,25 @@ export class Interpreter {
     const scope = callee.env.child();
     callee.parameters.forEach((name, index) => scope.define(name, args[index] ?? null));
 
-    this.frames.push(`${callee.name || "anonymous function"}(...)`);
+    const displayName = callee.name || "anonymous function";
+    this.frames.push(`${displayName}(...)`);
+    if (this.recorder !== null) {
+      this.recorder.call(displayName, args, position, this.frames, scope);
+    }
+
     try {
-      return this.evalBlock(callee.body, scope);
+      const result = this.evalBlock(callee.body, scope);
+      if (this.recorder !== null) {
+        this.recorder.return_(result, position, this.frames, scope);
+      }
+      return result;
     } catch (error) {
-      if (error instanceof ReturnSignal) return error.value;
+      if (error instanceof ReturnSignal) {
+        if (this.recorder !== null) {
+          this.recorder.return_(error.value, position, this.frames, scope);
+        }
+        return error.value;
+      }
       throw error;
     } finally {
       this.frames.pop();

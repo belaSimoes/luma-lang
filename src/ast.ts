@@ -168,12 +168,85 @@ export interface AssignExpression extends NodeBase {
   kind: "AssignExpression";
   target: Identifier | IndexExpression;
   value: Expression;
+  /**
+   * Set for compound assignment: `a += 1` carries `"+"`.
+   *
+   * Kept as an operator rather than desugared to `a = a + 1` so the target is
+   * evaluated exactly once — `items[next()] += 1` must not call `next` twice.
+   */
+  operator: string | null;
+}
+
+/** An interpolated string: `"hi, {name}"`. */
+export interface TemplateLiteral extends NodeBase {
+  kind: "TemplateLiteral";
+  /** Alternating literal text and embedded expressions, in source order. */
+  parts: Array<{ kind: "text"; value: string } | { kind: "expression"; value: Expression }>;
+}
+
+// ----------------------------------------------------------------- patterns
+
+export interface WildcardPattern extends NodeBase {
+  kind: "WildcardPattern";
+}
+
+/** Matches a value equal to a literal: `0`, `"circle"`, `true`, `nil`. */
+export interface LiteralPattern extends NodeBase {
+  kind: "LiteralPattern";
+  value: Expression;
+}
+
+/** Always matches, binding the value to a name for the arm's body. */
+export interface BindingPattern extends NodeBase {
+  kind: "BindingPattern";
+  name: string;
+}
+
+export interface ArrayPattern extends NodeBase {
+  kind: "ArrayPattern";
+  elements: Pattern[];
+  /** Name bound to the remaining elements by a trailing `...rest`, if present. */
+  rest: string | null;
+}
+
+export interface HashPattern extends NodeBase {
+  kind: "HashPattern";
+  /** Only the listed keys need to be present; extra keys are ignored. */
+  entries: Array<{ key: Expression; value: Pattern }>;
+}
+
+/** `1 | 2 | 3` — alternatives, none of which may bind a name. */
+export interface OrPattern extends NodeBase {
+  kind: "OrPattern";
+  options: Pattern[];
+}
+
+export type Pattern =
+  | WildcardPattern
+  | LiteralPattern
+  | BindingPattern
+  | ArrayPattern
+  | HashPattern
+  | OrPattern;
+
+export interface MatchArm {
+  pattern: Pattern;
+  /** Optional `if` guard, evaluated with the pattern's bindings in scope. */
+  guard: Expression | null;
+  body: Expression | BlockStatement;
+}
+
+export interface MatchExpression extends NodeBase {
+  kind: "MatchExpression";
+  subject: Expression;
+  arms: MatchArm[];
 }
 
 export type Expression =
   | Identifier
   | NumberLiteral
   | StringLiteral
+  | TemplateLiteral
   | BooleanLiteral
   | NilLiteral
   | ArrayLiteral
@@ -183,8 +256,9 @@ export type Expression =
   | InfixExpression
   | LogicalExpression
   | IfExpression
+  | MatchExpression
   | CallExpression
   | IndexExpression
   | AssignExpression;
 
-export type Node = Program | Statement | Expression;
+export type Node = Program | Statement | Expression | Pattern;

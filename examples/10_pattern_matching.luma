@@ -1,0 +1,46 @@
+// `match` destructures values instead of interrogating them.
+
+fn describe(value) {
+  match (value) {
+    0 -> "zero",
+    1 | 2 | 3 -> "small",
+    [] -> "an empty list",
+    [only] -> "one item: {only}",
+    [first, ...rest] -> "starts with {first}, then {len(rest)} more",
+    {"type": "circle", "radius": r} -> "a circle of area {round(3.14159 * r * r)}",
+    {"type": kind} -> "a shape of type {kind}",
+    n if type(n) == "number" && n > 100 -> "a big number",
+    s if type(s) == "string" -> "the string \"{s}\"",
+    _ -> "something else"
+  }
+}
+
+let values = [
+  0, 2, 7, [], [42], [1, 2, 3],
+  {"type": "circle", "radius": 3},
+  {"type": "square", "side": 2},
+  9000, "hello", true
+];
+
+for (value in values) {
+  print(describe(value));
+}
+
+print("");
+
+// Patterns make small interpreters pleasant to write. This one evaluates
+// arithmetic represented as nested arrays.
+fn eval_expr(node) {
+  match (node) {
+    n if type(n) == "number" -> n,
+    ["+", left, right] -> eval_expr(left) + eval_expr(right),
+    ["-", left, right] -> eval_expr(left) - eval_expr(right),
+    ["*", left, right] -> eval_expr(left) * eval_expr(right),
+    ["neg", operand] -> -eval_expr(operand),
+    _ -> { print("cannot evaluate {node}"); 0 }
+  }
+}
+
+// (1 + 2) * -(3 - 5)
+let tree = ["*", ["+", 1, 2], ["neg", ["-", 3, 5]]];
+print("tree evaluates to {eval_expr(tree)}");
