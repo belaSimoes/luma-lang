@@ -46,8 +46,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Luma accepts single-quoted strings, which keeps this one line valid in
+      # both bash and PowerShell without any backslash escaping.
       - name: Smoke-test the compiled CLI
-        run: node dist/cli.js -e "assert(1 + 2 * 3 == 7, \"precedence\"); print(\"ok\")"
+        run: node dist/cli.js -e "assert(1 + 2 * 3 == 7, 'precedence'); print('ok')"
 
   examples:
     name: examples match their snapshots
