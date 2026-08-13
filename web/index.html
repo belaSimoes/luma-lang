@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Luma Playground</title>
+    <meta
+      name="description"
+      content="Run the Luma programming language in your browser — a hand-written lexer, Pratt parser and tree-walking interpreter, with zero dependencies."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1117;
+        --panel: #161923;
+        --panel-2: #1c2030;
+        --border: #272c3d;
+        --text: #e6e8ef;
+        --muted: #8b93a7;
+        --accent: #7aa2f7;
+        --accent-2: #9ece6a;
+        --error: #f7768e;
+        --radius: 12px;
+        --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
+          Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(1100px 600px at 15% -10%, #1d2438 0%, transparent 60%),
+          var(--bg);
+        color: var(--text);
+        font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 20px 56px;
+      }
+
+      header { margin-bottom: 22px; }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 30px;
+        letter-spacing: -0.02em;
+      }
+
+      .brand .mark { color: var(--accent); }
+
+      .tagline {
+        margin: 6px 0 0;
+        color: var(--muted);
+        max-width: 62ch;
+      }
+
+      .links {
+        margin-top: 12px;
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 14px;
+      }
+
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 20px 0 14px;
+      }
+
+      button, select {
+        font: inherit;
+        color: var(--text);
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 14px;
+        cursor: pointer;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+
+      button:hover, select:hover { border-color: var(--accent); }
+
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #0d1017;
+        font-weight: 600;
+      }
+
+      button.primary:hover { background: #92b4ff; }
+
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        margin-left: auto;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      @media (max-width: 860px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+
+      .pane {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 420px;
+      }
+
+      .pane h2 {
+        margin: 0;
+        padding: 11px 16px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+        background: var(--panel-2);
+      }
+
+      textarea, pre {
+        margin: 0;
+        flex: 1;
+        padding: 16px;
+        font-family: var(--mono);
+        font-size: 13.5px;
+        line-height: 1.65;
+        tab-size: 2;
+      }
+
+      textarea {
+        border: 0;
+        resize: vertical;
+        background: transparent;
+        color: var(--text);
+        outline: none;
+        min-height: 380px;
+      }
+
+      pre {
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #c8d0e0;
+      }
+
+      pre .err { color: var(--error); }
+      pre .value { color: var(--accent-2); }
+      pre .meta { color: var(--muted); }
+
+      footer {
+        margin-top: 28px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 2px 9px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="brand">
+          <h1><span class="mark">Luma</span> Playground</h1>
+          <span class="pill">runs entirely in your browser</span>
+        </div>
+        <p class="tagline">
+          A small, expressive programming language — hand-written lexer, Pratt parser and
+          tree-walking interpreter, written in TypeScript with zero runtime dependencies.
+        </p>
+        <nav class="links">
+          <a href="https://github.com/belaSimoes/luma-lang">Source on GitHub</a>
+          <a href="https://github.com/belaSimoes/luma-lang#the-language-in-one-page">Syntax</a>
+          <a href="https://github.com/belaSimoes/luma-lang/blob/main/docs/LANGUAGE.md">Specification</a>
+        </nav>
+      </header>
+
+      <div class="toolbar">
+        <button class="primary" id="run">Run &nbsp;<span class="meta">Ctrl+Enter</span></button>
+        <select id="examples" aria-label="Load an example"></select>
+        <button id="tokens">Tokens</button>
+        <button id="ast">AST</button>
+        <span class="hint">Everything below executes locally — nothing is sent anywhere.</span>
+      </div>
+
+      <div class="grid">
+        <section class="pane">
+          <h2>Source</h2>
+          <textarea id="source" spellcheck="false" aria-label="Luma source code"></textarea>
+        </section>
+        <section class="pane">
+          <h2>Output</h2>
+          <pre id="output"><span class="meta">Press Run to execute.</span></pre>
+        </section>
+      </div>
+
+      <footer>
+        Luma — MIT licensed. Built as a study of how programming languages are implemented.
+      </footer>
+    </div>
+
+    <script type="module">
+      import { run, tokenize, parse, inspect } from "./dist/index.js";
+
+      const EXAMPLES = {
+        "Tour of the language": `// Everything in Luma is an expression.
+let name = "world";
+print("Hello, " + name + "!");
+
+// Functions are values and close over their scope.
+fn counter(start) {
+  let n = start;
+  fn() { n = n + 1; n }
+}
+
+let tick = counter(0);
+print(tick(), tick(), tick());
+
+// Arrays, hashes and a pipeline over them.
+let people = [
+  {"name": "Ada", "age": 36},
+  {"name": "Grace", "age": 45},
+  {"name": "Alan", "age": 41}
+];
+
+let names = map(sort(people, fn(a, b) { a.age - b.age }), fn(p) { p.name });
+print("by age:", join(names, ", "));
+
+// The value of the last expression is echoed below.
+reduce(range(1, 11), 0, fn(total, n) { total + n })`,
+
+        "FizzBuzz": `fn fizzbuzz(n) {
+  if (n % 15 == 0) { "FizzBuzz" }
+  else if (n % 3 == 0) { "Fizz" }
+  else if (n % 5 == 0) { "Buzz" }
+  else { str(n) }
+}
+
+for (n in range(1, 21)) {
+  print(fizzbuzz(n));
+}`,
+
+        "Memoised Fibonacci": `fn make_memo_fib() {
+  let cache = {};
+  fn compute(n) {
+    if (contains(cache, n)) { return cache[n]; }
+    let result = if (n < 2) { n } else { compute(n - 1) + compute(n - 2) };
+    cache[n] = result;
+    result
+  }
+  compute
+}
+
+let fib = make_memo_fib();
+print(join(map(range(15), fib), " "));
+fib(70)`,
+
+        "Quicksort": `fn quicksort(items) {
+  if (len(items) < 2) { return items; }
+  let pivot = first(items);
+  let others = rest(items);
+  quicksort(filter(others, fn(n) { n < pivot }))
+    + [pivot]
+    + quicksort(filter(others, fn(n) { n >= pivot }))
+}
+
+quicksort([5, 3, 9, 1, 7, 2, 8, 6, 4])`,
+
+        "Error diagnostics": `fn area(width, height) {
+  width * height
+}
+
+fn describe(shape) {
+  // A typo: \`hieght\` is nil, and nil is not a number.
+  area(shape.width, shape.hieght)
+}
+
+describe({"width": 5, "height": 5})`,
+      };
+
+      const sourceEl = document.getElementById("source");
+      const outputEl = document.getElementById("output");
+      const selectEl = document.getElementById("examples");
+
+      for (const label of Object.keys(EXAMPLES)) {
+        const option = document.createElement("option");
+        option.value = label;
+        option.textContent = label;
+        selectEl.append(option);
+      }
+
+      const escapeHtml = (text) =>
+        text.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]);
+
+      function render(parts) {
+        outputEl.innerHTML = parts.length
+          ? parts.map(([kind, text]) => `<span class="${kind}">${escapeHtml(text)}</span>`).join("\n")
+          : '<span class="meta">(no output)</span>';
+      }
+
+      function execute() {
+        const result = run(sourceEl.value);
+        const parts = result.output.map((line) => ["", line]);
+
+        if (!result.ok) {
+          parts.push(["err", result.error]);
+        } else if (result.value !== null) {
+          parts.push(["value", `=> ${inspect(result.value)}`]);
+        }
+        render(parts);
+      }
+
+      function dump(kind) {
+        try {
+          const data = kind === "ast" ? parse(sourceEl.value) : tokenize(sourceEl.value);
+          render([["", JSON.stringify(data, null, 2)]]);
+        } catch (error) {
+          render([["err", String(error.message ?? error)]]);
+        }
+      }
+
+      document.getElementById("run").addEventListener("click", execute);
+      document.getElementById("ast").addEventListener("click", () => dump("ast"));
+      document.getElementById("tokens").addEventListener("click", () => dump("tokens"));
+
+      selectEl.addEventListener("change", () => {
+        sourceEl.value = EXAMPLES[selectEl.value];
+        execute();
+      });
+
+      sourceEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          execute();
+        }
+        if (event.key === "Tab") {
+          event.preventDefault();
+          const { selectionStart: start, selectionEnd: end, value } = sourceEl;
+          sourceEl.value = `${value.slice(0, start)}  ${value.slice(end)}`;
+          sourceEl.selectionStart = sourceEl.selectionEnd = start + 2;
+        }
+      });
+
+      sourceEl.value = EXAMPLES[Object.keys(EXAMPLES)[0]];
+      execute();
+    </script>
+  </body>
+</html>

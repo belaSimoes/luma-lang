@@ -1,0 +1,12 @@
+// The obligatory first program.
+
+print("Hello, Luma!");
+
+// `let` introduces a binding; `+` concatenates as soon as one side is a string.
+let name = "world";
+let greeting = "Hello, " + name + "!";
+print(greeting);
+
+// Blocks evaluate to their last expression, so `if` is an expression.
+let mood = if (len(name) > 3) { "verbose" } else { "terse" };
+print("This greeting is " + mood + ".");

@@ -1,0 +1,94 @@
+// A calculator written in Luma — a recursive-descent parser for arithmetic,
+// implemented in the very language this repository interprets.
+//
+// Grammar:
+//   expression := term (("+" | "-") term)*
+//   term       := factor (("*" | "/") factor)*
+//   factor     := number | "(" expression ")" | "-" factor
+
+fn lex(source) {
+  let tokens = [];
+  let i = 0;
+  let digits = "0123456789.";
+
+  while (i < len(source)) {
+    let ch = source[i];
+    if (ch == " ") {
+      i = i + 1;
+    } else if (contains(digits, ch)) {
+      let start = i;
+      while (i < len(source) && contains(digits, source[i])) {
+        i = i + 1;
+      }
+      tokens = push(tokens, slice(source, start, i));
+    } else {
+      tokens = push(tokens, ch);
+      i = i + 1;
+    }
+  }
+  tokens
+}
+
+fn new_parser(tokens) {
+  let position = 0;
+
+  fn peek() {
+    if (position < len(tokens)) { tokens[position] } else { nil }
+  }
+
+  fn advance() {
+    let token = peek();
+    position = position + 1;
+    token
+  }
+
+  fn parse_factor() {
+    let token = advance();
+    if (token == nil) { return 0; }
+    if (token == "(") {
+      let value = parse_expression();
+      advance();               // consume ")"
+      return value;
+    }
+    if (token == "-") { return -parse_factor(); }
+    num(token)
+  }
+
+  fn parse_term() {
+    let left = parse_factor();
+    while (peek() == "*" || peek() == "/") {
+      let operator = advance();
+      let right = parse_factor();
+      left = if (operator == "*") { left * right } else { left / right };
+    }
+    left
+  }
+
+  fn parse_expression() {
+    let left = parse_term();
+    while (peek() == "+" || peek() == "-") {
+      let operator = advance();
+      let right = parse_term();
+      left = if (operator == "+") { left + right } else { left - right };
+    }
+    left
+  }
+
+  parse_expression
+}
+
+fn calculate(source) {
+  new_parser(lex(source))()
+}
+
+let expressions = [
+  "1 + 2 * 3",
+  "(1 + 2) * 3",
+  "10 / 4",
+  "2 * (3 + 4) - 5",
+  "-3 + 10"
+];
+
+for (expression in expressions) {
+  print(expression + " = " + str(calculate(expression)));
+}

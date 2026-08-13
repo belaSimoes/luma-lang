@@ -1,0 +1,45 @@
+// Three ways to compute Fibonacci numbers — and why memoisation matters.
+
+// 1. The naive recursive definition. Elegant, exponential.
+fn fib(n) {
+  if (n < 2) { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+// 2. Iterative: linear time, constant space.
+fn fib_iterative(n) {
+  let a = 0;
+  let b = 1;
+  let i = 0;
+  while (i < n) {
+    let next = a + b;
+    a = b;
+    b = next;
+    i = i + 1;
+  }
+  a
+}
+
+// 3. Memoised: the closure keeps its own cache alive between calls.
+//
+// `compute` is declared rather than bound with `let` so that it can call
+// itself. Declarations evaluate to nil, so the trailing `compute` is what
+// actually hands the closure back to the caller.
+fn make_memo_fib() {
+  let cache = {};
+  fn compute(n) {
+    if (contains(cache, n)) { return cache[n]; }
+    let result = if (n < 2) { n } else { compute(n - 1) + compute(n - 2) };
+    cache[n] = result;
+    result
+  }
+  compute
+}
+
+let fib_memo = make_memo_fib();
+
+print("naive     ", join(map(range(15), fib), " "));
+print("iterative ", join(map(range(15), fib_iterative), " "));
+print("memoised  ", join(map(range(15), fib_memo), " "));
+
+// Only the memoised version can reach this far without melting.
+print("fib(70) = " + str(fib_memo(70)));

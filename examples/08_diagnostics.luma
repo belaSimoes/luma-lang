@@ -1,0 +1,18 @@
+// This example is *meant* to fail: it shows what a Luma diagnostic looks like.
+//
+// Errors carry the exact line and column, underline the offending span and
+// unwind the call stack so you can see how execution got there.
+
+fn area(width, height) {
+  width * height
+}
+
+print("rectangle:", area(3, 4));
+
+fn describe(shape) {
+  // `shape.wdith` is a typo — hashes return nil for missing keys, and nil is
+  // not a number, so the multiplication below is what actually blows up.
+  area(shape.width, shape.hieght)
+}
+
+print("square:", describe({"width": 5, "height": 5}));

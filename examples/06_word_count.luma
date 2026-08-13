@@ -1,0 +1,29 @@
+// A small text pipeline: normalise, tokenise, count, rank.
+
+let text = "the quick brown fox jumps over the lazy dog " +
+           "the dog barks and the fox runs";
+
+fn tokenize(source) {
+  filter(split(lower(trim(source)), " "), fn(word) { word != "" })
+}
+
+fn count_words(words) {
+  reduce(words, {}, fn(counts, word) {
+    counts[word] = if (contains(counts, word)) { counts[word] + 1 } else { 1 };
+    counts
+  })
+}
+
+let counts = count_words(tokenize(text));
+
+// Sort the entries by count descending, then alphabetically.
+let entries = map(keys(counts), fn(word) { [word, counts[word]] });
+let ranked = sort(entries, fn(a, b) {
+  if (a[1] != b[1]) { b[1] - a[1] } else if (a[0] < b[0]) { -1 } else { 1 }
+});
+
+print("distinct words:", len(counts));
+print("");
+for (entry in slice(ranked, 0, 5)) {
+  print(entry[0] + " " + "." * (12 - len(entry[0])) + " " + str(entry[1]));
+}

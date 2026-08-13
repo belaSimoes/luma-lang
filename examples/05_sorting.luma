@@ -1,0 +1,53 @@
+// Sorting algorithms written in Luma itself.
+
+// Quicksort, the classic functional formulation.
+fn quicksort(items) {
+  if (len(items) < 2) { return items; }
+
+  let pivot = first(items);
+  let others = rest(items);
+
+  let smaller = filter(others, fn(n) { n < pivot });
+  let larger  = filter(others, fn(n) { n >= pivot });
+
+  quicksort(smaller) + [pivot] + quicksort(larger)
+}
+
+// Merge sort, to show a different decomposition.
+fn merge(left, right) {
+  let out = [];
+  let i = 0;
+  let j = 0;
+  while (i < len(left) && j < len(right)) {
+    if (left[i] <= right[j]) {
+      out = push(out, left[i]);
+      i = i + 1;
+    } else {
+      out = push(out, right[j]);
+      j = j + 1;
+    }
+  }
+  out + slice(left, i) + slice(right, j)
+}
+
+fn mergesort(items) {
+  if (len(items) < 2) { return items; }
+  let middle = floor(len(items) / 2);
+  merge(mergesort(slice(items, 0, middle)), mergesort(slice(items, middle)))
+}
+
+let data = [5, 3, 9, 1, 7, 2, 8, 6, 4];
+print("input     ", data);
+print("quicksort ", quicksort(data));
+print("mergesort ", mergesort(data));
+print("builtin   ", sort(data));
+
+// The builtin `sort` also takes a comparator.
+let people = [
+  {"name": "Ada", "age": 36},
+  {"name": "Grace", "age": 45},
+  {"name": "Alan", "age": 41}
+];
+
+let by_age = sort(people, fn(a, b) { a.age - b.age });
+print("by age    ", join(map(by_age, fn(p) { p.name }), ", "));
